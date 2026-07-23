@@ -1,0 +1,65 @@
+# ==========================================
+# Node / Vite
+# ==========================================
+node_modules/
+dist/
+dist-ssr/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+venv/
+.venv/
+env/
+
+.pytest_cache/
+.mypy_cache/
+
+# ==========================================
+# Environment variables
+# ==========================================
+.env
+*.local
+
+# ==========================================
+# Backend generated files
+# ==========================================
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+backend/outputs/*
+!backend/outputs/.gitkeep
+
+# ==========================================
+# IDE
+# ==========================================
+.vscode/*
+!.vscode/extensions.json
+
+.idea/
+
+# ==========================================
+# Operating System
+# ==========================================
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# Visual Studio
+# ==========================================
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
