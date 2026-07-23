@@ -1,10 +1,19 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { getPipeDimensions } from "../services/parseUtils";
 
 // Hjelpefunksjon for å finne retning på ny rad
 const DIRECTION_VECTORS = {
   "N": [0, 1, 0], "NE": [0.707, 0.707, 0], "E": [1, 0, 0], "SE": [0.707, -0.707, 0],
   "S": [0, -1, 0], "SW": [-0.707, -0.707, 0], "W": [-1, 0, 0], "NW": [-0.707, 0.707, 0],
   "UP": [0, 0, 1], "DOWN": [0, 0, -1]
+};
+
+// Hjelpefunksjon for å beregne lengde ut fra koordinater
+const calculateLength = (comp) => {
+  const dx = (Number(comp.end_x) || 0) - (Number(comp.start_x) || 0);
+  const dy = (Number(comp.end_y) || 0) - (Number(comp.start_y) || 0);
+  const dz = (Number(comp.end_z) || 0) - (Number(comp.start_z) || 0);
+  return Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz));
 };
 
 export default function EditableTable({ data, onDataChange }) {
@@ -18,6 +27,29 @@ export default function EditableTable({ data, onDataChange }) {
       setEditedData([...editedData, ...newItems]);
     }
   }, [data, editMode, editedData.length]);
+
+  // Beregn gruppe-data for visning (slår sammen like komponenter med nøyaktig samme mål)
+  const groupedDisplayData = useMemo(() => {
+    if (!data || editMode) return data;
+    
+    const groups = {};
+    const orderedKeys = [];
+
+    data.forEach(comp => {
+      const length = calculateLength(comp);
+      // Unik nøkkel: Kun helt identiske komponenter (type, størrelse, schedule, lengde) slås sammen
+      const key = `${comp.component}_${comp.size_dn_nps}_${comp.schedule}_${length}_${comp.insulation_thickness_mm || 0}`;
+      
+      if (!groups[key]) {
+        groups[key] = { ...comp, quantity: 1, calc_length: length };
+        orderedKeys.push(key);
+      } else {
+        groups[key].quantity += 1;
+      }
+    });
+
+    return orderedKeys.map(k => groups[k]);
+  }, [data, editMode]);
 
   // Start redigering – kopier dataene
   const startEditing = () => {
@@ -59,12 +91,10 @@ export default function EditableTable({ data, onDataChange }) {
 
     const nextItemNo = baseData.length > 0 ? Math.max(...baseData.map((item) => Number(item.item_no) || 0)) + 1 : 1;
     
-    // Arv start-koordinater fra forrige komponents slutt-koordinater
     const startX = lastItem.end_x ?? 0;
     const startY = lastItem.end_y ?? 0;
     const startZ = lastItem.end_z ?? 0;
 
-    // Beregn slutt-koordinater basert på retning
     const dir = lastItem.direction || "N";
     const vec = DIRECTION_VECTORS[dir] || [0, 1, 0];
     const length = 50; // Standardlengde for manuelt lagt til rad
@@ -95,7 +125,7 @@ export default function EditableTable({ data, onDataChange }) {
     }
   };
 
-  const currentData = editMode ? editedData : data;
+  const currentData = editMode ? editedData : groupedDisplayData;
 
   if (!data || data.length === 0) {
     return <p className="text-gray-400 mt-8 text-center">Ingen komponenter å vise.</p>;
@@ -104,7 +134,7 @@ export default function EditableTable({ data, onDataChange }) {
   return (
     <div className="mt-8 overflow-x-auto">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">📊 MTO Komponenter ({currentData.length})</h2>
+        <h2 className="text-xl font-semibold">📊 MTO Komponenter ({editMode ? currentData.length : groupedDisplayData.length})</h2>
         <div className="flex gap-2">
           <button onClick={addComponentRow} className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 transition-colors">➕ Legg til</button>
           {editMode ? (
@@ -118,12 +148,17 @@ export default function EditableTable({ data, onDataChange }) {
         </div>
       </div>
 
-      <table className="w-full text-sm text-left text-gray-300">
+      <table className="w-full text-sm text-left text-gray-300 border-collapse">
         <thead className="text-xs uppercase bg-gray-800 text-gray-400">
           <tr>
             <th className="px-3 py-3">Item</th>
             <th className="px-3 py-3">Component</th>
             <th className="px-3 py-3">Size</th>
+            <th className="px-3 py-3 text-center">Qty</th>
+            <th className="px-3 py-3 text-center">OD (mm)</th>
+            <th className="px-3 py-3 text-center">Wall T (mm)</th>
+            <th className="px-3 py-3 text-center">ID (mm)</th>
+            <th className="px-3 py-3 text-center">Vekt (kg/m)</th>
             <th className="px-3 py-3">Start X</th>
             <th className="px-3 py-3">Start Y</th>
             <th className="px-3 py-3">Start Z</th>
@@ -136,53 +171,57 @@ export default function EditableTable({ data, onDataChange }) {
           </tr>
         </thead>
         <tbody>
-          {currentData.map((comp, i) => (
-            <tr key={comp.id || i} className={`bg-gray-900 border-b border-gray-700 hover:bg-gray-800 ${comp._autoFixed ? 'border-l-4 border-l-emerald-500' : ''}`}>
-              <td className="px-3 py-2">{comp.item_no}</td>
-              {editMode ? (
-                <>
-                  <td className="px-3 py-2"><input value={comp.component || ''} onChange={e => updateCell(i, 'component', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-24" /></td>
-                  <td className="px-3 py-2"><input value={comp.size_dn_nps || ''} onChange={e => updateCell(i, 'size_dn_nps', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
-                  <td className="px-3 py-2"><input type="number" value={comp.start_x ?? 0} onChange={e => updateCell(i, 'start_x', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
-                  <td className="px-3 py-2"><input type="number" value={comp.start_y ?? 0} onChange={e => updateCell(i, 'start_y', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
-                  <td className="px-3 py-2"><input type="number" value={comp.start_z ?? 0} onChange={e => updateCell(i, 'start_z', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
-                  <td className="px-3 py-2"><input type="number" value={comp.end_x ?? 0} onChange={e => updateCell(i, 'end_x', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
-                  <td className="px-3 py-2"><input type="number" value={comp.end_y ?? 0} onChange={e => updateCell(i, 'end_y', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
-                  <td className="px-3 py-2"><input type="number" value={comp.end_z ?? 0} onChange={e => updateCell(i, 'end_z', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
-                  <td className="px-3 py-2"><input type="number" value={comp.insulation_thickness_mm ?? 0} onChange={e => updateCell(i, 'insulation_thickness_mm', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-16" /></td>
-                  <td className="px-3 py-2"><input value={comp.schedule || '40'} onChange={e => updateCell(i, 'schedule', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-16" /></td>
-                  <td className="px-3 py-2 text-center">
-                    <button 
-                      type="button"
-                      onClick={() => deleteRow(i)} 
-                      className="text-red-400 hover:text-red-200 bg-gray-800 hover:bg-red-900 px-2 py-1 rounded text-xs transition-colors"
-                      title="Slett rad"
-                    >
-                      🗑️
-                    </button>
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td className="px-3 py-2 font-medium text-white">
-                    <div className="flex items-center gap-2">
-                      {comp.component}
-                      {comp._autoFixed && <span className="text-xs bg-emerald-900 text-emerald-300 px-1.5 py-0.5 rounded">Auto</span>}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2">{comp.size_dn_nps}</td>
-                  <td className="px-3 py-2 text-xs">{comp.start_x?.toFixed(1)}</td>
-                  <td className="px-3 py-2 text-xs">{comp.start_y?.toFixed(1)}</td>
-                  <td className="px-3 py-2 text-xs">{comp.start_z?.toFixed(1)}</td>
-                  <td className="px-3 py-2 text-xs">{comp.end_x?.toFixed(1)}</td>
-                  <td className="px-3 py-2 text-xs">{comp.end_y?.toFixed(1)}</td>
-                  <td className="px-3 py-2 text-xs">{comp.end_z?.toFixed(1)}</td>
-                  <td className="px-3 py-2">{comp.insulation_thickness_mm > 0 ? comp.insulation_thickness_mm + 'mm' : '-'}</td>
-                  <td className="px-3 py-2">{comp.schedule || '40'}</td>
-                </>
-              )}
-            </tr>
-          ))}
+          {currentData.map((comp, i) => {
+            const pipeData = getPipeDimensions(comp.size_dn_nps);
+            return (
+              <tr key={i} className={`bg-gray-900 border-b border-gray-700 hover:bg-gray-800 ${comp._autoFixed ? 'border-l-4 border-l-emerald-500' : ''}`}>
+                <td className="px-3 py-2">{comp.item_no}</td>
+                
+                {editMode ? (
+                  <>
+                    <td className="px-3 py-2"><input value={comp.component || ''} onChange={e => updateCell(i, 'component', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-24" /></td>
+                    <td className="px-3 py-2"><input value={comp.size_dn_nps || ''} onChange={e => updateCell(i, 'size_dn_nps', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
+                    <td className="px-3 py-2 text-center text-gray-500 italic">1</td>
+                    <td className="px-3 py-2 text-center text-gray-400" colSpan={4}>{pipeData ? `${pipeData.od_mm} / ${pipeData.wall_t_mm} / ${pipeData.id_mm} / ${pipeData.vekt_kg_m}` : 'Ukjent størrelse'}</td>
+                    <td className="px-3 py-2"><input type="number" value={comp.start_x ?? 0} onChange={e => updateCell(i, 'start_x', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
+                    <td className="px-3 py-2"><input type="number" value={comp.start_y ?? 0} onChange={e => updateCell(i, 'start_y', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
+                    <td className="px-3 py-2"><input type="number" value={comp.start_z ?? 0} onChange={e => updateCell(i, 'start_z', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
+                    <td className="px-3 py-2"><input type="number" value={comp.end_x ?? 0} onChange={e => updateCell(i, 'end_x', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
+                    <td className="px-3 py-2"><input type="number" value={comp.end_y ?? 0} onChange={e => updateCell(i, 'end_y', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
+                    <td className="px-3 py-2"><input type="number" value={comp.end_z ?? 0} onChange={e => updateCell(i, 'end_z', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
+                    <td className="px-3 py-2"><input type="number" value={comp.insulation_thickness_mm ?? 0} onChange={e => updateCell(i, 'insulation_thickness_mm', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-16" /></td>
+                    <td className="px-3 py-2"><input value={comp.schedule || '40'} onChange={e => updateCell(i, 'schedule', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-16" /></td>
+                    <td className="px-3 py-2 text-center">
+                      <button type="button" onClick={() => deleteRow(i)} className="text-red-400 hover:text-red-200 bg-gray-800 hover:bg-red-900 px-2 py-1 rounded text-xs transition-colors" title="Slett rad">🗑️</button>
+                    </td>
+                  </>
+                ) : (
+                  <>
+                    <td className="px-3 py-2 font-medium text-white">
+                      <div className="flex items-center gap-2">
+                        {comp.component}
+                        {comp._autoFixed && <span className="text-xs bg-emerald-900 text-emerald-300 px-1.5 py-0.5 rounded">Auto</span>}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">{comp.size_dn_nps}</td>
+                    <td className="px-3 py-2 text-center font-bold text-blue-400">{comp.quantity || 1}</td>
+                    <td className="px-3 py-2 text-center">{pipeData?.od_mm || '-'}</td>
+                    <td className="px-3 py-2 text-center">{pipeData?.wall_t_mm || '-'}</td>
+                    <td className="px-3 py-2 text-center">{pipeData?.id_mm || '-'}</td>
+                    <td className="px-3 py-2 text-center">{pipeData?.vekt_kg_m || '-'}</td>
+                    <td className="px-3 py-2 text-xs">{Number(comp.start_x)?.toFixed(1)}</td>
+                    <td className="px-3 py-2 text-xs">{Number(comp.start_y)?.toFixed(1)}</td>
+                    <td className="px-3 py-2 text-xs">{Number(comp.start_z)?.toFixed(1)}</td>
+                    <td className="px-3 py-2 text-xs">{Number(comp.end_x)?.toFixed(1)}</td>
+                    <td className="px-3 py-2 text-xs">{Number(comp.end_y)?.toFixed(1)}</td>
+                    <td className="px-3 py-2 text-xs">{Number(comp.end_z)?.toFixed(1)}</td>
+                    <td className="px-3 py-2">{comp.insulation_thickness_mm > 0 ? comp.insulation_thickness_mm + 'mm' : '-'}</td>
+                    <td className="px-3 py-2">{comp.schedule || '40'}</td>
+                  </>
+                )}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
