@@ -17,7 +17,7 @@ const calculateLength = (comp) => {
   return isNaN(len) ? null : Math.round(len);
 };
 
-export default function EditableTable({ data, onDataChange }) {
+export default function EditableTable({ data, onDataChange, enableGrouping = false }) {
   const [editMode, setEditMode] = useState(false);
   const [editedData, setEditedData] = useState([]);
 
@@ -29,9 +29,9 @@ export default function EditableTable({ data, onDataChange }) {
     }
   }, [data, editMode, editedData.length]);
 
-  // Beregn gruppe-data for visning (slår sammen like komponenter)
+  // Beregn gruppe-data KUN hvis enableGrouping er true
   const groupedDisplayData = useMemo(() => {
-    if (!data || editMode) return data;
+    if (!data || editMode || !enableGrouping) return data;
     
     const groups = {};
     const orderedKeys = [];
@@ -63,7 +63,7 @@ export default function EditableTable({ data, onDataChange }) {
     });
 
     return orderedKeys.map(k => groups[k]);
-  }, [data, editMode]);
+  }, [data, editMode, enableGrouping]);
 
   const startEditing = () => {
     setEditedData(JSON.parse(JSON.stringify(data)));
@@ -133,7 +133,8 @@ export default function EditableTable({ data, onDataChange }) {
     }
   };
 
-  const currentData = editMode ? editedData : groupedDisplayData;
+  // Velg riktig datasett basert på om vi redigerer eller ikke
+  const displayData = editMode ? editedData : groupedDisplayData;
 
   if (!data || data.length === 0) {
     return <p className="text-gray-400 mt-8 text-center">Ingen komponenter å vise.</p>;
@@ -142,7 +143,7 @@ export default function EditableTable({ data, onDataChange }) {
   return (
     <div className="mt-8 overflow-x-auto">
       <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold">📊 MTO Komponenter ({editMode ? currentData.length : groupedDisplayData.length})</h2>
+        <h2 className="text-xl font-semibold">📊 MTO Komponenter ({displayData.length})</h2>
         <div className="flex gap-2">
           <button onClick={addComponentRow} className="bg-blue-600 text-white px-3 py-1 rounded text-sm hover:bg-blue-700 transition-colors">➕ Legg til</button>
           {editMode ? (
@@ -179,7 +180,7 @@ export default function EditableTable({ data, onDataChange }) {
           </tr>
         </thead>
         <tbody>
-          {currentData.map((comp, i) => {
+          {displayData.map((comp, i) => {
             const pipeData = getPipeDimensions(comp.size_dn_nps);
             return (
               <tr key={i} className={`bg-gray-900 border-b border-gray-700 hover:bg-gray-800 ${comp._autoFixed ? 'border-l-4 border-l-emerald-500' : ''}`}>

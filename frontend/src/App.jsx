@@ -453,7 +453,7 @@ function App() {
                       Denne listen brukes automatisk som Steg 1 når du går til AI-fanen — ingen ny MTO-lesing der.
                     </p>
                   </div>
-                  <EditableTable data={lomData} onDataChange={(newData) => setLomData(newData)} />
+                  <EditableTable data={lomData} enableGrouping={true} onDataChange={(newData) => setLomData(newData)} />
                   <div className="export-btns" style={{ marginTop: '1rem' }}>
                     <button className="btn btn-green" onClick={() => exportToJSON(lomData)}>📥 JSON</button>
                     <button className="btn btn-blue" onClick={() => exportToCSV(lomData)}>📊 CSV</button>
