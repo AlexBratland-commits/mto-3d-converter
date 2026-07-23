@@ -13,14 +13,15 @@ const calculateLength = (comp) => {
   const dx = (Number(comp.end_x) || 0) - (Number(comp.start_x) || 0);
   const dy = (Number(comp.end_y) || 0) - (Number(comp.start_y) || 0);
   const dz = (Number(comp.end_z) || 0) - (Number(comp.start_z) || 0);
-  return Math.round(Math.sqrt(dx * dx + dy * dy + dz * dz));
+  const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  return isNaN(len) ? null : Math.round(len);
 };
 
 export default function EditableTable({ data, onDataChange }) {
   const [editMode, setEditMode] = useState(false);
   const [editedData, setEditedData] = useState([]);
 
-  // Synkroniser editedData hvis data endres eksternt (f.eks. via Auto-Fix)
+  // Synkroniser editedData hvis data endres eksternt
   useEffect(() => {
     if (editMode && data && data.length > editedData.length) {
       const newItems = data.slice(editedData.length);
@@ -28,17 +29,30 @@ export default function EditableTable({ data, onDataChange }) {
     }
   }, [data, editMode, editedData.length]);
 
-  // Beregn gruppe-data for visning (slår sammen like komponenter med nøyaktig samme mål)
+  // Beregn gruppe-data for visning (slår sammen like komponenter)
   const groupedDisplayData = useMemo(() => {
     if (!data || editMode) return data;
     
     const groups = {};
     const orderedKeys = [];
 
-    data.forEach(comp => {
+    data.forEach((comp, index) => {
       const length = calculateLength(comp);
-      // Unik nøkkel: Kun helt identiske komponenter (type, størrelse, schedule, lengde) slås sammen
-      const key = `${comp.component}_${comp.size_dn_nps}_${comp.schedule}_${length}_${comp.insulation_thickness_mm || 0}`;
+      const explicitQty = parseInt(comp.quantity, 10) || 1;
+      
+      // Hvis komponenten har en eksplisitt quantity fra AI > 1, respekter denne direkte
+      if (comp.quantity && comp.quantity > 1) {
+        const key = `explicit_${index}`;
+        groups[key] = { ...comp, quantity: explicitQty };
+        orderedKeys.push(key);
+        return;
+      }
+
+      // Bestem nøkkel for gruppering: Hvis koordinater mangler (NaN), bruk kun Type+Størrelse+Schedule. 
+      // Hvis koordinater finnes, inkluder lengden.
+      const key = length !== null 
+        ? `${comp.component}_${comp.size_dn_nps}_${comp.schedule}_${length}_${comp.insulation_thickness_mm || 0}`
+        : `${comp.component}_${comp.size_dn_nps}_${comp.schedule}_${comp.insulation_thickness_mm || 0}`;
       
       if (!groups[key]) {
         groups[key] = { ...comp, quantity: 1, calc_length: length };
@@ -51,38 +65,32 @@ export default function EditableTable({ data, onDataChange }) {
     return orderedKeys.map(k => groups[k]);
   }, [data, editMode]);
 
-  // Start redigering – kopier dataene
   const startEditing = () => {
     setEditedData(JSON.parse(JSON.stringify(data)));
     setEditMode(true);
   };
 
-  // Lagre endringer og send tilbake
   const saveChanges = () => {
     onDataChange(editedData);
     setEditMode(false);
   };
 
-  // Avbryt redigering
   const cancelEditing = () => {
     setEditMode(false);
     setEditedData([]);
   };
 
-  // Oppdater en celle
   const updateCell = (rowIndex, field, value) => {
     const updated = [...editedData];
     updated[rowIndex] = { ...updated[rowIndex], [field]: value };
     setEditedData(updated);
   };
 
-  // Slett en rad
   const deleteRow = (rowIndex) => {
     const updated = editedData.filter((_, i) => i !== rowIndex);
     setEditedData(updated);
   };
 
-  // Legg til en ny komponentrad med arvede/relative koordinater
   const addComponentRow = () => {
     const baseData = editMode ? editedData : (data || []);
     const lastItem = baseData.length > 0 ? baseData[baseData.length - 1] : {
@@ -97,7 +105,7 @@ export default function EditableTable({ data, onDataChange }) {
 
     const dir = lastItem.direction || "N";
     const vec = DIRECTION_VECTORS[dir] || [0, 1, 0];
-    const length = 50; // Standardlengde for manuelt lagt til rad
+    const length = 50;
     const endX = startX + vec[0] * length;
     const endY = startY + vec[1] * length;
     const endZ = startZ + vec[2] * length;
@@ -209,12 +217,12 @@ export default function EditableTable({ data, onDataChange }) {
                     <td className="px-3 py-2 text-center">{pipeData?.wall_t_mm || '-'}</td>
                     <td className="px-3 py-2 text-center">{pipeData?.id_mm || '-'}</td>
                     <td className="px-3 py-2 text-center">{pipeData?.vekt_kg_m || '-'}</td>
-                    <td className="px-3 py-2 text-xs">{Number(comp.start_x)?.toFixed(1)}</td>
-                    <td className="px-3 py-2 text-xs">{Number(comp.start_y)?.toFixed(1)}</td>
-                    <td className="px-3 py-2 text-xs">{Number(comp.start_z)?.toFixed(1)}</td>
-                    <td className="px-3 py-2 text-xs">{Number(comp.end_x)?.toFixed(1)}</td>
-                    <td className="px-3 py-2 text-xs">{Number(comp.end_y)?.toFixed(1)}</td>
-                    <td className="px-3 py-2 text-xs">{Number(comp.end_z)?.toFixed(1)}</td>
+                    <td className="px-3 py-2 text-xs">{comp.start_x != null ? Number(comp.start_x).toFixed(1) : '-'}</td>
+                    <td className="px-3 py-2 text-xs">{comp.start_y != null ? Number(comp.start_y).toFixed(1) : '-'}</td>
+                    <td className="px-3 py-2 text-xs">{comp.start_z != null ? Number(comp.start_z).toFixed(1) : '-'}</td>
+                    <td className="px-3 py-2 text-xs">{comp.end_x != null ? Number(comp.end_x).toFixed(1) : '-'}</td>
+                    <td className="px-3 py-2 text-xs">{comp.end_y != null ? Number(comp.end_y).toFixed(1) : '-'}</td>
+                    <td className="px-3 py-2 text-xs">{comp.end_z != null ? Number(comp.end_z).toFixed(1) : '-'}</td>
                     <td className="px-3 py-2">{comp.insulation_thickness_mm > 0 ? comp.insulation_thickness_mm + 'mm' : '-'}</td>
                     <td className="px-3 py-2">{comp.schedule || '40'}</td>
                   </>
