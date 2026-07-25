@@ -117,9 +117,9 @@ function DustParticles({ center, maxDim, count = 220 }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Kamera-intro (Kun auto-fit) & OrbitControls                       */
+/*  Kamera-intro (Kule-basert fiks fra Claude) & OrbitControls        */
 /* ------------------------------------------------------------------ */
-function CameraRig({ center, maxDim }) {
+function CameraRig({ center, fitRadius, fov = 50 }) {
   const { camera, gl } = useThree();
   const controlsRef = useRef();
   const startTimeRef = useRef(null);
@@ -137,13 +137,20 @@ function CameraRig({ center, maxDim }) {
     };
   }, [gl]);
 
+  // Avstand som garanterer at HELE modellens omsluttende kule er innenfor
+  // synsfeltet uansett rotasjonsvinkel — ikke bare fra startvinkelen.
+  const fitDistance = useMemo(() => {
+    const fovRad = (fov * Math.PI) / 180;
+    return (fitRadius / Math.sin(fovRad / 2)) * 1.35; // 1.35 gir litt ekstra luft
+  }, [fitRadius, fov]);
+
   const wide = useMemo(
-    () => new THREE.Vector3(center.x + maxDim * 3.4, center.y + maxDim * 2.6, center.z + maxDim * 3.4),
-    [center.x, center.y, center.z, maxDim]
+    () => center.clone().add(new THREE.Vector3(1, 0.75, 1).normalize().multiplyScalar(fitDistance * 1.6)),
+    [center.x, center.y, center.z, fitDistance]
   );
   const close = useMemo(
-    () => new THREE.Vector3(center.x + maxDim * 0.8, center.y + maxDim * 1.2, center.z + maxDim * 0.6),
-    [center.x, center.y, center.z, maxDim]
+    () => center.clone().add(new THREE.Vector3(0.7, 1.0, 0.5).normalize().multiplyScalar(fitDistance)),
+    [center.x, center.y, center.z, fitDistance]
   );
 
   useFrame((state) => {
@@ -175,8 +182,8 @@ function CameraRig({ center, maxDim }) {
       rotateSpeed={0.7}
       zoomSpeed={1.0}
       panSpeed={0.9}
-      minDistance={Math.max(0.1, maxDim * 0.02)}
-      maxDistance={Math.max(50000, maxDim * 20)}
+      minDistance={Math.max(0.1, fitRadius * 0.05)}
+      maxDistance={Math.max(50000, fitRadius * 30)}
     />
   );
 }
@@ -187,7 +194,7 @@ function CameraRig({ center, maxDim }) {
 export default function Viewer3D({ components, asmeOn, onToggleAsme }) {
   const [showDimensions, setShowDimensions] = useState(false);
 
-  const { bounds, center, maxDim } = useMemo(() => {
+  const { bounds, center, maxDim, fitRadius } = useMemo(() => {
     const box = new THREE.Box3();
     if (components && components.length > 0) {
       components.forEach((c) => {
@@ -200,13 +207,15 @@ export default function Viewer3D({ components, asmeOn, onToggleAsme }) {
     const c = box.getCenter(new THREE.Vector3());
     const s = box.getSize(new THREE.Vector3());
     const m = Math.max(s.x, s.y, s.z, 500);
-    return { bounds: box, center: c, maxDim: m };
+    const sphere = new THREE.Sphere();
+    box.getBoundingSphere(sphere);
+    const r = Math.max(sphere.radius, 250);
+    return { bounds: box, center: c, maxDim: m, fitRadius: r };
   }, [components]);
 
   const gridTexture = useGridTexture(maxDim);
   const envMap = useProceduralEnvMap();
 
-  // Dynamisk far-plan som skalerer trygt med modellens størrelse
   const cameraNear = 0.1; 
   const cameraFar = Math.max(100000, maxDim * 25); 
   const cameraStart = [center.x + maxDim * 3.4, center.y + maxDim * 2.6, center.z + maxDim * 3.4];
@@ -252,12 +261,12 @@ export default function Viewer3D({ components, asmeOn, onToggleAsme }) {
           gl={{ antialias: true, logarithmicDepthBuffer: true }}
           camera={{ fov: 50, near: cameraNear, far: cameraFar, position: cameraStart }}
         >
-          <CameraRig center={center} maxDim={maxDim} />
+          {/* Bruker ny kule-basert kamera-avstand */}
+          <CameraRig center={center} fitRadius={fitRadius} />
 
           <ambientLight intensity={0.25} />
           <hemisphereLight args={[0x1e293b, 0x000000, 0.4]} />
           
-          {/* Eksplisitt Shadow Frustum for å unngå klipping av skygger på store modeller */}
           <directionalLight
             position={[center.x + maxDim * 0.8, center.y + maxDim * 1.2, center.z + maxDim * 0.6]}
             intensity={3}
