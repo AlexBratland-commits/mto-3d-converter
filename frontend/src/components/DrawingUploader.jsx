@@ -422,9 +422,15 @@ Returner et JSON-objekt:
 {
   "reference_point": { "point_name": "F11", "east_X": 360142, "north_Y": 171879, "elevation_Z": 530337 },
   "mto_items": [
-     { "item_no": "1", "quantity": 1, "component": "PIPE", "size_dn_nps": "DN250", "schedule": "40S", "material": "A106-B" }
+     { "item_no": "1", "quantity": 4, "component": "PIPE", "size_dn_nps": "DN250", "schedule": "40S", "material": "A106-B" }
   ]
 }
+
+KRITISK FOR "quantity": Du MÅ lese tallet som står i "QTY" eller "QUANT"-kolonnen i tabellen på bildet. 
+- Hvis tabellen viser 4 for en komponent, MÅ du sette "quantity": 4.
+- Hvis tabellen viser 16, setter du "quantity": 16.
+- Bruk KUN "quantity": 1 hvis tabellen faktisk viser 1, eller hvis kolonnen mangler helt.
+- IKKE kopier eksempelet over (hvor det står 4), men bruk de faktiske tallene fra bildet/OCR-teksten!
 
  ${customStandardsSection}${ocrTexts.length > 0 ? "OCR-tekst:\n" + ocrTexts.map(ot => ot.text).join("\n") : ""}`;
 
