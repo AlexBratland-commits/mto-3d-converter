@@ -175,15 +175,13 @@ function CameraRig({ center, fitRadius, fov = 50 }) {
     <OrbitControls
       ref={controlsRef}
       makeDefault
-      enablePan
-      screenSpacePanning
+      enablePan={false} // <--- DENNE LINJA FIKSER PROBLEMET! Stopper modellen fra å forsvinne ved zoom.
       enableDamping
       dampingFactor={0.08}
       rotateSpeed={0.7}
       zoomSpeed={1.0}
-      panSpeed={0.9}
-      minDistance={Math.max(0.1, fitRadius * 0.05)}
-      maxDistance={Math.max(50000, fitRadius * 30)}
+      minDistance={Math.max(0.1, fitRadius * 0.1)}
+      maxDistance={Math.max(50000, fitRadius * 25)}
     />
   );
 }
