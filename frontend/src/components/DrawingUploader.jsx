@@ -70,8 +70,10 @@ function estimateComponentLength(type, dn) {
     knownDns[0]
   );
 
-  const odNearest = ASME_OD[nearestDn];
-  const odTarget = ASME_OD[dn];
+  // FIX (Claude): Bruk fallback for OD i tilfelle tabellen mangler DN (f.eks. DN20)
+  const odNearest = ASME_OD[nearestDn] || Math.round(nearestDn * 1.15 * 10) / 10;
+  const odTarget = ASME_OD[dn] || Math.round(dn * 1.15 * 10) / 10;
+  
   if (odNearest && odTarget) {
     const estimated = Math.round(table[nearestDn] * (odTarget / odNearest));
     console.warn(
@@ -355,7 +357,8 @@ function buildExpectedCountsChecklist(lomItems) {
   const counts = {};
   lomItems.forEach(i => {
     const type = normalizeComponentName(i.component);
-    if (type === 'Fastener') return;
+    // FIX (Takk til Claude): Ekskluder både Fasteners og Pipe (sistnevnte oppgis i meter, forvirrer AI)
+    if (type === 'Fastener' || type === 'Pipe') return;
     const key = `${type} ${i.size_dn_nps || ''}`.trim();
     counts[key] = (counts[key] || 0) + (Number(i.quantity) || 1);
   });
@@ -614,6 +617,9 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
     const lomIssues = [];
     const extraIssues = [];
     Object.entries(lomMap).forEach(([k, v]) => {
+      // FIX (Claude): Ikke sjekk antall for rør (Pipe). MTO oppgir lengde i meter, AI finner antall kutt.
+      if (v.component === 'Pipe') return;
+      
       if (v.found < v.expected) lomIssues.push({ component: v.component, size: v.size, expected: v.expected, found: v.found, missing: v.expected - v.found });
       if (v.found > v.expected) extraIssues.push({ component: v.component, size: v.size, expected: v.expected, found: v.found, extra: v.found - v.expected });
     });

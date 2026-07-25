@@ -38,14 +38,16 @@ export default function EditableTable({ data, onDataChange, enableGrouping = fal
 
     data.forEach((comp, index) => {
       const length = calculateLength(comp);
-      const explicitQty = parseInt(comp.quantity, 10) || 1;
       
-      // Hvis komponenten har en eksplisitt quantity fra AI > 1, respekter denne direkte
-      if (comp.quantity && comp.quantity > 1) {
-        const key = `explicit_${index}`;
-        groups[key] = { ...comp, quantity: explicitQty };
-        orderedKeys.push(key);
-        return;
+      // FIX (Claude): Respekter eksisterende quantity (selv om det er 0.2 for rør)
+      if (comp.quantity !== undefined && comp.quantity !== null && String(comp.quantity).trim() !== "") {
+        const q = parseFloat(comp.quantity);
+        if (!isNaN(q)) {
+          const key = `explicit_${index}`;
+          groups[key] = { ...comp, quantity: q };
+          orderedKeys.push(key);
+          return;
+        }
       }
 
       // Bestem nøkkel for gruppering: Hvis koordinater mangler (NaN), bruk kun Type+Størrelse+Schedule. 
@@ -190,7 +192,7 @@ export default function EditableTable({ data, onDataChange, enableGrouping = fal
                   <>
                     <td className="px-3 py-2"><input value={comp.component || ''} onChange={e => updateCell(i, 'component', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-24" /></td>
                     <td className="px-3 py-2"><input value={comp.size_dn_nps || ''} onChange={e => updateCell(i, 'size_dn_nps', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
-                    <td className="px-3 py-2 text-center text-gray-500 italic">1</td>
+                    <td className="px-3 py-2"><input type="number" value={comp.quantity ?? 1} onChange={e => updateCell(i, 'quantity', parseFloat(e.target.value) || 1)} className="bg-gray-700 text-white px-2 py-1 rounded w-12 text-center" /></td>
                     <td className="px-3 py-2 text-center text-gray-400" colSpan={4}>{pipeData ? `${pipeData.od_mm} / ${pipeData.wall_t_mm} / ${pipeData.id_mm} / ${pipeData.vekt_kg_m}` : 'Ukjent størrelse'}</td>
                     <td className="px-3 py-2"><input type="number" value={comp.start_x ?? 0} onChange={e => updateCell(i, 'start_x', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
                     <td className="px-3 py-2"><input type="number" value={comp.start_y ?? 0} onChange={e => updateCell(i, 'start_y', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
