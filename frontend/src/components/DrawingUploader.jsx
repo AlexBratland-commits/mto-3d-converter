@@ -686,8 +686,19 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
       try {
         mergeResult = mergeAndCalculate(lomItems, routeItems, referencePoint);
       } catch (err) {
-        console.warn("mergeAndCalculate feilet:", err);
-        mergeResult = { components: routeItems.map(c => ({ ...c, schedule: c.schedule || "40" })), lomIssues: [], extraIssues: [], topologyWarnings: [], ruleWarnings: [], continuityIssues: [], reconciliationStatus: 'unknown' };
+        console.warn("mergeAndCalculate feilet, tvinger lineær geometri:", err);
+        // EXPERT FIX: Bruk ALLTID vår geometri-motor som fallback. 
+        // Da overskrives AI-ens feil lengder (f.eks. 212mm buer) med riktig ASME-lengde.
+        const fallbackComponents = calculateAbsoluteCoordinatesLinear(routeItems, referencePoint);
+        mergeResult = { 
+          components: fallbackComponents.map(c => ({ ...c, schedule: c.schedule || "40" })), 
+          lomIssues: [], 
+          extraIssues: [], 
+          topologyWarnings: ["Kunne ikke bygge graf-struktur, bruker lineær plassering (AI kan ha manglede ID-er)."], 
+          ruleWarnings: [], 
+          continuityIssues: [], 
+          reconciliationStatus: 'unknown' 
+        };
       }
       const { components, lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, reconciliationStatus } = mergeResult;
 
