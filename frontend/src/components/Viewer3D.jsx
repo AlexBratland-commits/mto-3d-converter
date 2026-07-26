@@ -151,18 +151,7 @@ function CameraRig({ center, fitRadius, bounds, fov = 50 }) {
     [center.x, center.y, center.z, fitDistance]
   );
 
-  // EXPERT FIX: Begrens hvordan langt man kan panorere target-punktet vekk fra modellen
-  const panLimit = fitRadius * 1.5;
-
   useFrame((state) => {
-    if (controlsRef.current && bounds) {
-      const t = controlsRef.current.target;
-      const cx = THREE.MathUtils.clamp(t.x, bounds.min.x - panLimit, bounds.max.x + panLimit);
-      const cy = THREE.MathUtils.clamp(t.y, bounds.min.y - panLimit, bounds.max.y + panLimit);
-      const cz = THREE.MathUtils.clamp(t.z, bounds.min.z - panLimit, bounds.max.z + panLimit);
-      if (cx !== t.x || cy !== t.y || cz !== t.z) t.set(cx, cy, cz);
-    }
-
     if (doneRef.current || userInteractedRef.current) {
       if (controlsRef.current) controlsRef.current.update();
       return;
@@ -193,8 +182,8 @@ function CameraRig({ center, fitRadius, bounds, fov = 50 }) {
       panSpeed={0.9}
       mouseButtons={{ LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }}
       touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
-      minDistance={Math.max(0.1, fitRadius * 0.05)}
-      maxDistance={Math.max(50000, fitRadius * 30)}
+      minDistance={0.1} // Tillater å zoome helt inn
+      maxDistance={Math.max(50000, fitRadius * 50)} // Tillater å zoome langt ut
     />
   );
 }

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import Tesseract from "tesseract.js";
 import * as pdfjsLib from "pdfjs-dist";
 import { safeParseJSON } from "../services/parseUtils";
-import { calculateAbsoluteCoordinatesLinear, buildRouteFromGraph, validateTopologyRules, validateContinuityLinear, normalizeComponentName, normalizeRouteItem } from "../services/geometryEngine";
+import { calculateAbsoluteCoordinatesLinear, buildRouteFromGraph, validateTopologyRules, validateContinuityLinear, normalizeComponentName, normalizeRouteItem, sanitizeRouteGeometry } from "../services/geometryEngine";
 import { getSystemPrompt, getUserPrompt, getLomPrompt } from "../services/aiPrompts";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -295,12 +295,16 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
         return;
       }
 
+      // EXPERT FIX: Kjør Geometrisk Validering (Sanering) før vi bygger modellen!
+      const sanitizedRouteItems = sanitizeRouteGeometry(routeItems);
+
       let mergeResult;
       try {
-        mergeResult = mergeAndCalculate(lomItems, routeItems, referencePoint);
+        // Bruk de saniterte dataene i stedet for rådataene
+        mergeResult = mergeAndCalculate(lomItems, sanitizedRouteItems, referencePoint);
       } catch (err) {
         console.warn("mergeAndCalculate feilet, tvinger lineær geometri:", err);
-        const fallbackComponents = calculateAbsoluteCoordinatesLinear(routeItems, referencePoint);
+        const fallbackComponents = calculateAbsoluteCoordinatesLinear(sanitizedRouteItems, referencePoint);
         mergeResult = { 
           components: fallbackComponents.map(c => ({ ...c, schedule: c.schedule || "40" })), 
           lomIssues: [], extraIssues: [], topologyWarnings: ["Kunne ikke bygge graf-struktur, bruker lineær plassering (AI kan ha manglede ID-er)."], 

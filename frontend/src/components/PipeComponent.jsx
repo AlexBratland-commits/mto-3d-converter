@@ -97,11 +97,13 @@ export default function PipeComponent({ component, asmeOn, showDimensions, compo
           <sphereGeometry args={[Math.max(radius * 0.9, 12), 16, 16]} />
           <primitive object={createMaterial('#3b82f6', false)} attach="material" />
         </mesh>
-        <Html position={[start.x, start.y + 20, start.z]} center style={{ pointerEvents: "none" }}>
-          <div style={{ background: "rgba(59,130,246,0.85)", color: "white", padding: "4px 8px", borderRadius: "6px", fontSize: "10px", whiteSpace: "nowrap" }}>
-            {component.component || '?'}
-          </div>
-        </Html>
+        {showDimensions && (
+          <Html position={[start.x, start.y + 20, start.z]} center style={{ pointerEvents: "none" }}>
+            <div style={{ background: "rgba(59,130,246,0.85)", color: "white", padding: "4px 8px", borderRadius: "6px", fontSize: "10px", whiteSpace: "nowrap" }}>
+              {component.component || '?'}
+            </div>
+          </Html>
+        )}
       </group>
     );
   }

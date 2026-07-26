@@ -274,3 +274,58 @@ export function buildExpectedCountsChecklist(lomItems) {
   if (!lines) return "";
   return `\nFØR du svarer: materiallisten sier at rørtraséen skal inneholde omtrent:\n${lines}\nVIKTIG: dette er en kontrolliste over synlige komponenter. Hvis du ser komponenter fra denne listen på tegningen, skal de være med i JSON selv om de er små, ligger på avgreninger eller ikke er på hovedrøret.\n`;
 }
+
+/**
+ * GEOMETRISK VALIDERINGSMOTOR (Pre-processor)
+ * Rydder opp i AI-ens rådata FØR 3D-koordinatene beregnes.
+ * Tvinger frem ASME-standardlengder og sikrer sammenhengende graf.
+ */
+export function sanitizeRouteGeometry(routeItems) {
+  if (!routeItems || routeItems.length === 0) return [];
+
+  const sanitized = [];
+  let prevValidDir = "E"; // Standard retning hvis AI-en mangler en
+
+  routeItems.forEach((comp, index) => {
+    let cleanComp = { ...comp };
+    const type = normalizeComponentName(cleanComp.component || '');
+    const dn = parseInt(String(cleanComp.size_dn_nps || '').replace(/DN/i, '')) || 100;
+    const asmeLen = estimateComponentLength(type, dn);
+
+    // 1. Riktig retning
+    if (cleanComp.direction) {
+      prevValidDir = cleanComp.direction;
+    } else {
+      cleanComp.direction = prevValidDir; // Arv forrige retning
+    }
+
+    // 2. Tvunget ASME-lengde for alt unntatt Pipe
+    if (type !== 'Pipe') {
+      cleanComp.length_mm = asmeLen;
+    } else {
+      // For Pipe: Hvis AI-en ga en urimelig lengde (f.eks. > 10m eller < 10mm), gi den en standardlengde
+      let aiLen = Number(cleanComp.length_mm) || 0;
+      if (aiLen < 10 || aiLen > 10000) {
+        console.warn(`Geometri-sjekk: Urimeleg lengde (${aiLen}mm) på rad ${index}. Setter til 500mm.`);
+        cleanComp.length_mm = 500; 
+      }
+    }
+
+    // 3. Sikre gyldig ID og graf-struktur
+    if (!cleanComp.id) {
+      cleanComp.id = String(index + 1);
+    }
+    
+    // Hvis det er den første komponenten, tving connects_from til START
+    if (index === 0) {
+      cleanComp.connects_from = "START";
+    } else if (!cleanComp.connects_from || cleanComp.connects_from === "START") {
+      // Hvis den mangler kobling, koble til forrige sanitized komponent
+      cleanComp.connects_from = sanitized[index - 1].id;
+    }
+
+    sanitized.push(cleanComp);
+  });
+
+  return sanitized;
+}
