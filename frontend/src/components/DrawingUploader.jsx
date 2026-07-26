@@ -70,15 +70,11 @@ function estimateComponentLength(type, dn) {
     knownDns[0]
   );
 
-  // FIX (Claude): Bruk fallback for OD i tilfelle tabellen mangler DN (f.eks. DN20)
   const odNearest = ASME_OD[nearestDn] || Math.round(nearestDn * 1.15 * 10) / 10;
   const odTarget = ASME_OD[dn] || Math.round(dn * 1.15 * 10) / 10;
   
   if (odNearest && odTarget) {
     const estimated = Math.round(table[nearestDn] * (odTarget / odNearest));
-    console.warn(
-      `ASME_LENGTHS: ingen tabellverdi for ${type} DN${dn} – estimerer ${estimated}mm ut fra OD-forhold mot DN${nearestDn}. Bør verifiseres manuelt.`
-    );
     return estimated;
   }
   return table[nearestDn] || 50;
@@ -107,7 +103,7 @@ function normalizeComponentName(name) {
   if (n.includes('DRIP')) return 'Drip Ring';
   if (n.includes('SPECT') || n.includes('BLIND')) return 'Spectacle Blind';
   if (n.includes('GASKET') || n.includes('STUD') || n.includes('BOLT') || n.includes('NUT')) return 'Fastener';
-  return n.trim(); // FIX (Takk til Claude): returner alltid store bokstaver for sammenligning
+  return n.trim(); // FIX: returner alltid store bokstaver
 }
 
 const ROUTE_KEY_ALIASES = {
@@ -357,7 +353,6 @@ function buildExpectedCountsChecklist(lomItems) {
   const counts = {};
   lomItems.forEach(i => {
     const type = normalizeComponentName(i.component);
-    // FIX (Takk til Claude): Ekskluder både Fasteners og Pipe (sistnevnte oppgis i meter, forvirrer AI)
     if (type === 'Fastener' || type === 'Pipe') return;
     const key = `${type} ${i.size_dn_nps || ''}`.trim();
     counts[key] = (counts[key] || 0) + (Number(i.quantity) || 1);
@@ -580,6 +575,16 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
     return items.map(normalizeRouteItem);
   };
 
+  // EXPERT FIX: Regelmotor for Auto-Correct (ChatGPT forslaget)
+  const correctionMap = {
+    'SPECTACLE BLIND': 'FLANGE',
+    'BLIND FLANGE': 'FLANGE',
+    'BLIND': 'FLANGE',
+    'WELDLET': 'NIPPLE',
+    'SOCKOLET': 'NIPPLE',
+    'THREDOLET': 'NIPPLE'
+  };
+
   const mergeAndCalculate = (lomItems, routeItems, originPoint) => {
     const cleanSize = (s) => String(s || 'ANY').toUpperCase().replace(/\s+/g, '');
 
@@ -604,7 +609,10 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
       normalizedSize: cleanSize(i.size_dn_nps || i.size)
     }));
 
-    // EXPERT FIX (Takk til Claude): Tell opp hva som faktisk ble funnet i ruta
+    // 1. Identifiser mangler og ekstra before correction
+    let lomIssues = [];
+    let extraIssues = [];
+
     const routeMap = {};
     routeNormalized.forEach(i => { 
       const k = `${i.normalizedType}_${i.normalizedSize}`;
@@ -612,33 +620,64 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
       routeMap[k].found++;
     });
 
-    // Oppdater funnet-antall for forventede komponenter
     Object.keys(lomMap).forEach(k => {
       if (routeMap[k]) lomMap[k].found = routeMap[k].found;
     });
+
+    Object.entries(lomMap).forEach(([k, v]) => {
+      if (v.component === 'Pipe') return;
+      if (v.found < v.expected) lomIssues.push({ key: k, component: v.component, size: v.size, expected: v.expected, found: v.found, missing: v.expected - v.found });
+    });
+
+    Object.entries(routeMap).forEach(([k, v]) => {
+      if (v.component === 'Pipe') return;
+      if (!lomMap[k]) {
+        extraIssues.push({ key: k, component: v.component, size: v.size, found: v.found, extra: v.found });
+      }
+    });
+
+    // 2. KJØR AUTO-CORRECT LOGIKK
+    if (extraIssues.length > 0 && lomIssues.length > 0) {
+      extraIssues.forEach((extra) => {
+        const targetComponent = correctionMap[extra.component];
+        if (targetComponent) {
+          // Se etter en matchende 'mangler' issue med samme størrelse
+          const missingIndex = lomIssues.findIndex(m => m.component === targetComponent && m.size === extra.size && m.missing > 0);
+          if (missingIndex !== -1) {
+            const missing = lomIssues[missingIndex];
+            
+            // Finn selve komponentobjektet i ruta og endre det
+            const compToFix = routeNormalized.find(c => 
+              normalizeComponentName(c.component) === extra.component && 
+              cleanSize(c.size_dn_nps || c.size) === extra.size
+            );
+
+            if (compToFix) {
+              compToFix.component = targetComponent.charAt(0) + targetComponent.slice(1).toLowerCase(); // E.g. "Flange"
+              compToFix._autoFixed = true; // Setter flagg for UI
+              
+              // Oppdater mangel-listen
+              missing.missing--;
+              missing.found++;
+              if (missing.missing === 0) {
+                lomIssues.splice(missingIndex, 1);
+              }
+
+              // Fjern fra ekstra-listen (marker som fikset)
+              extra.fixed = true;
+            }
+          }
+        }
+      });
+      
+      // Rensk ekstra-listen for fikset elementer
+      extraIssues = extraIssues.filter(e => !e.fixed);
+    }
 
     const { components: withCoords, topologyWarnings, continuityIssues: graphContinuityIssues, usedGraphSchema } = buildRouteFromGraph(routeNormalized, originPoint);
     
     const ruleWarnings = validateTopologyRules(routeNormalized);
     const continuityIssues = usedGraphSchema ? graphContinuityIssues : validateContinuityLinear(withCoords);
-
-    const lomIssues = [];
-    const extraIssues = [];
-
-    // 1. Sjekk forventet mot funnet (Mangler eller for mange)
-    Object.entries(lomMap).forEach(([k, v]) => {
-      if (v.component === 'Pipe') return; // Ignorer rørlengder
-      if (v.found < v.expected) lomIssues.push({ component: v.component, size: v.size, expected: v.expected, found: v.found, missing: v.expected - v.found });
-      if (v.found > v.expected) extraIssues.push({ component: v.component, size: v.size, expected: v.expected, found: v.found, extra: v.found - v.expected });
-    });
-
-    // 2. Sjekk for UFORVENTEDE komponenter (Finnes i rute, men ikke i MTO i det hele tatt)
-    Object.entries(routeMap).forEach(([k, v]) => {
-      if (v.component === 'Pipe') return; // Ignorer rør
-      if (!lomMap[k]) {
-        extraIssues.push({ component: v.component, size: v.size, expected: 0, found: v.found, extra: v.found });
-      }
-    });
 
     const reconciliationStatus = (lomIssues.length === 0 && extraIssues.length === 0 && continuityIssues.length === 0) ? 'safe' : 'deviation';
 
@@ -703,8 +742,6 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
         mergeResult = mergeAndCalculate(lomItems, routeItems, referencePoint);
       } catch (err) {
         console.warn("mergeAndCalculate feilet, tvinger lineær geometri:", err);
-        // EXPERT FIX: Bruk ALLTID vår geometri-motor som fallback. 
-        // Da overskrives AI-ens feil lengder (f.eks. 212mm buer) med riktig ASME-lengde.
         const fallbackComponents = calculateAbsoluteCoordinatesLinear(routeItems, referencePoint);
         mergeResult = { 
           components: fallbackComponents.map(c => ({ ...c, schedule: c.schedule || "40" })), 
