@@ -76,7 +76,7 @@ export default function PipeComponent({ component, asmeOn, showDimensions, compo
   const color = getCol(component.component);
   const dn = parseDN(component.size_dn_nps);
   
-  // 🔧 Fiks 1: Redusert skaleringsfaktor for tynnere rør (0.35 i stedet for 0.75)
+  // Fiks 1: Redusert skaleringsfaktor for tynnere rør (0.35 i stedet for 0.75)
   const radius = asmeOn && dn ? (getOD(dn) / 2) * 0.35 : (dn ? (dn / 2) * 1.0 : 30);
   
   const insulationThickness = (component.insulation_thickness_mm || 0) / 2;
@@ -89,15 +89,20 @@ export default function PipeComponent({ component, asmeOn, showDimensions, compo
   let geometry, position, quaternion;
   let skipInsulation = false;
 
-  // 🔧 Fiks 2: Håndter "bombe"-komponenter (lengde 0) som punktmarkører, ikke kuler
+  // Fiks 2 (Fra Claude): Håndter punkt-komponenter (lengde 0) som synlige kuler, ikke usynlige advarsler
   if (length < 1.0 && !component.component?.toLowerCase().includes('tee') && !component.component?.toLowerCase().includes('flange')) {
-    // Dette er en feilaktig komponent – vis som en liten advarselsmarkør
     return (
-      <Html position={[start.x, start.y + 20, start.z]} center style={{ pointerEvents: "none" }}>
-        <div style={{ background: "rgba(239,68,68,0.8)", color: "white", padding: "4px 8px", borderRadius: "6px", fontSize: "10px", whiteSpace: "nowrap" }}>
-          ⚠️ {component.component || '?'} (ugyldig)
-        </div>
-      </Html>
+      <group>
+        <mesh position={[start.x, start.y, start.z]} castShadow>
+          <sphereGeometry args={[Math.max(radius * 0.9, 12), 16, 16]} />
+          <primitive object={createMaterial('#3b82f6', false)} attach="material" />
+        </mesh>
+        <Html position={[start.x, start.y + 20, start.z]} center style={{ pointerEvents: "none" }}>
+          <div style={{ background: "rgba(59,130,246,0.85)", color: "white", padding: "4px 8px", borderRadius: "6px", fontSize: "10px", whiteSpace: "nowrap" }}>
+            {component.component || '?'}
+          </div>
+        </Html>
+      </group>
     );
   }
 

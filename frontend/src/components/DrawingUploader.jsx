@@ -107,7 +107,7 @@ function normalizeComponentName(name) {
   if (n.includes('DRIP')) return 'Drip Ring';
   if (n.includes('SPECT') || n.includes('BLIND')) return 'Spectacle Blind';
   if (n.includes('GASKET') || n.includes('STUD') || n.includes('BOLT') || n.includes('NUT')) return 'Fastener';
-  return name;
+  return n.trim(); // FIX (Takk til Claude): returner alltid store bokstaver for sammenligning
 }
 
 const ROUTE_KEY_ALIASES = {
