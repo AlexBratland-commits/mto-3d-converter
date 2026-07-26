@@ -604,9 +604,17 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
       normalizedSize: cleanSize(i.size_dn_nps || i.size)
     }));
 
+    // EXPERT FIX (Takk til Claude): Tell opp hva som faktisk ble funnet i ruta
+    const routeMap = {};
     routeNormalized.forEach(i => { 
-      const k = `${i.normalizedType}_${i.normalizedSize}`; 
-      if (lomMap[k]) lomMap[k].found++; 
+      const k = `${i.normalizedType}_${i.normalizedSize}`;
+      if (!routeMap[k]) routeMap[k] = { found: 0, component: i.normalizedType, size: i.normalizedSize };
+      routeMap[k].found++;
+    });
+
+    // Oppdater funnet-antall for forventede komponenter
+    Object.keys(lomMap).forEach(k => {
+      if (routeMap[k]) lomMap[k].found = routeMap[k].found;
     });
 
     const { components: withCoords, topologyWarnings, continuityIssues: graphContinuityIssues, usedGraphSchema } = buildRouteFromGraph(routeNormalized, originPoint);
@@ -616,12 +624,20 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
 
     const lomIssues = [];
     const extraIssues = [];
+
+    // 1. Sjekk forventet mot funnet (Mangler eller for mange)
     Object.entries(lomMap).forEach(([k, v]) => {
-      // FIX (Claude): Ikke sjekk antall for rør (Pipe). MTO oppgir lengde i meter, AI finner antall kutt.
-      if (v.component === 'Pipe') return;
-      
+      if (v.component === 'Pipe') return; // Ignorer rørlengder
       if (v.found < v.expected) lomIssues.push({ component: v.component, size: v.size, expected: v.expected, found: v.found, missing: v.expected - v.found });
       if (v.found > v.expected) extraIssues.push({ component: v.component, size: v.size, expected: v.expected, found: v.found, extra: v.found - v.expected });
+    });
+
+    // 2. Sjekk for UFORVENTEDE komponenter (Finnes i rute, men ikke i MTO i det hele tatt)
+    Object.entries(routeMap).forEach(([k, v]) => {
+      if (v.component === 'Pipe') return; // Ignorer rør
+      if (!lomMap[k]) {
+        extraIssues.push({ component: v.component, size: v.size, expected: 0, found: v.found, extra: v.found });
+      }
     });
 
     const reconciliationStatus = (lomIssues.length === 0 && extraIssues.length === 0 && continuityIssues.length === 0) ? 'safe' : 'deviation';

@@ -1,16 +1,40 @@
 import { useState, useEffect } from "react";
 
-// ASME-valideringsfunksjon (du kan også importere fra utils/asmeEngine.js hvis du har den der)
+// Oppdatert ASME-valideringsfunksjon
 function validateComponent(c) {
-  const dn = c.size_dn_nps ? parseInt(c.size_dn_nps.replace(/DN\s*/i, '')) : null;
+  const dn = c.size_dn_nps ? parseInt(String(c.size_dn_nps).replace(/DN\s*/i, '')) : null;
   const len = Math.sqrt((c.end_x - c.start_x) ** 2 + (c.end_y - c.start_y) ** 2 + (c.end_z - c.start_z) ** 2);
   const hasMaterial = c.material_grade || c.spec_material;
   const hasSchedule = c.schedule;
 
-  if (!dn || dn <= 0) return { status: 'red', msg: 'Mangler gyldig DN/NPS.' };
-  if (len < 0.01 && !c.component?.toLowerCase().includes('tee') && !c.component?.toLowerCase().includes('flange')) return { status: 'red', msg: 'Ugyldig geometri (start/slutt er lik).' };
+  if (!dn || dn <= 0) return { status: 'yellow', msg: 'Mangler gyldig DN/NPS.' };
+  
+  // EXPERT FIX (Takk til Claude): Utvid unntakene for punkt-komponenter (len < 0.01)
+  const compName = (c.component || '').toLowerCase();
+  const isPointComponent = 
+    compName.includes('tee') || 
+    compName.includes('flange') || 
+    compName.includes('plug') || 
+    compName.includes('penetration') || 
+    compName.includes('element') || 
+    compName.includes('weldlet') || 
+    compName.includes('olet') || 
+    compName.includes('spectacle') || 
+    compName.includes('blind') || 
+    compName.includes('gasket') || 
+    compName.includes('support') || 
+    compName.includes('stud') || 
+    compName.includes('bolt') || 
+    compName.includes('nut');
+
+  // Hvis den har null lengde, men ikke er en godkjent punkt-komponent -> RØD
+  if (len < 0.01 && !isPointComponent) return { status: 'red', msg: 'Ugyldig geometri (start/slutt er lik).' };
+  
+  // Hvis den mangler materialspesifikasjon -> GUL
   if (!hasMaterial) return { status: 'yellow', msg: 'Mangler materialspesifikasjon.' };
   if (!hasSchedule) return { status: 'yellow', msg: 'Mangler Schedule (antatt SCH40).' };
+  
+  // Hvis alt er bra (inkludert punkt-komponenter med riktig type) -> GRØNN
   return { status: 'green', msg: 'ASME Standard validert.' };
 }
 

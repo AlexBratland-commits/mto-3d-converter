@@ -117,9 +117,9 @@ function DustParticles({ center, maxDim, count = 220 }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Kamera-intro (Kule-basert fiks fra Claude) & OrbitControls        */
+/*  Kamera-intro & OrbitControls (Med Pan-klemming fra Claude)        */
 /* ------------------------------------------------------------------ */
-function CameraRig({ center, fitRadius, fov = 50 }) {
+function CameraRig({ center, fitRadius, bounds, fov = 50 }) {
   const { camera, gl } = useThree();
   const controlsRef = useRef();
   const startTimeRef = useRef(null);
@@ -137,11 +137,9 @@ function CameraRig({ center, fitRadius, fov = 50 }) {
     };
   }, [gl]);
 
-  // Avstand som garanterer at HELE modellens omsluttende kule er innenfor
-  // synsfeltet uansett rotasjonsvinkel — ikke bare fra startvinkelen.
   const fitDistance = useMemo(() => {
     const fovRad = (fov * Math.PI) / 180;
-    return (fitRadius / Math.sin(fovRad / 2)) * 1.35; // 1.35 gir litt ekstra luft
+    return (fitRadius / Math.sin(fovRad / 2)) * 1.35;
   }, [fitRadius, fov]);
 
   const wide = useMemo(
@@ -153,7 +151,18 @@ function CameraRig({ center, fitRadius, fov = 50 }) {
     [center.x, center.y, center.z, fitDistance]
   );
 
+  // EXPERT FIX: Begrens hvordan langt man kan panorere target-punktet vekk fra modellen
+  const panLimit = fitRadius * 1.5;
+
   useFrame((state) => {
+    if (controlsRef.current && bounds) {
+      const t = controlsRef.current.target;
+      const cx = THREE.MathUtils.clamp(t.x, bounds.min.x - panLimit, bounds.max.x + panLimit);
+      const cy = THREE.MathUtils.clamp(t.y, bounds.min.y - panLimit, bounds.max.y + panLimit);
+      const cz = THREE.MathUtils.clamp(t.z, bounds.min.z - panLimit, bounds.max.z + panLimit);
+      if (cx !== t.x || cy !== t.y || cz !== t.z) t.set(cx, cy, cz);
+    }
+
     if (doneRef.current || userInteractedRef.current) {
       if (controlsRef.current) controlsRef.current.update();
       return;
@@ -175,13 +184,17 @@ function CameraRig({ center, fitRadius, fov = 50 }) {
     <OrbitControls
       ref={controlsRef}
       makeDefault
-      enablePan={false} // <--- DENNE LINJA FIKSER PROBLEMET! Stopper modellen fra å forsvinne ved zoom.
+      enablePan
+      screenSpacePanning
       enableDamping
       dampingFactor={0.08}
       rotateSpeed={0.7}
       zoomSpeed={1.0}
-      minDistance={Math.max(0.1, fitRadius * 0.1)}
-      maxDistance={Math.max(50000, fitRadius * 25)}
+      panSpeed={0.9}
+      mouseButtons={{ LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }}
+      touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
+      minDistance={Math.max(0.1, fitRadius * 0.05)}
+      maxDistance={Math.max(50000, fitRadius * 30)}
     />
   );
 }
@@ -259,8 +272,8 @@ export default function Viewer3D({ components, asmeOn, onToggleAsme }) {
           gl={{ antialias: true, logarithmicDepthBuffer: true }}
           camera={{ fov: 50, near: cameraNear, far: cameraFar, position: cameraStart }}
         >
-          {/* Bruker ny kule-basert kamera-avstand */}
-          <CameraRig center={center} fitRadius={fitRadius} />
+          {/* Sender nå med bounds for å aktivere panLimit */}
+          <CameraRig center={center} fitRadius={fitRadius} bounds={bounds} />
 
           <ambientLight intensity={0.25} />
           <hemisphereLight args={[0x1e293b, 0x000000, 0.4]} />
