@@ -54,6 +54,29 @@ export function normalizeDirKey(raw) {
   return map[s] || s;
 }
 
+const ROUTE_KEY_ALIASES = {
+  cf: 'connects_from', comp: 'component', dn: 'size_dn_nps',
+  dir: 'direction', len: 'length_mm', ins: 'insulation_thickness_mm',
+  sch: 'schedule', conf: 'confidence', src: 'source',
+};
+
+export function normalizeRouteItem(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const out = {};
+  Object.entries(raw).forEach(([k, v]) => { out[ROUTE_KEY_ALIASES[k] || k] = v; });
+  return out;
+}
+
+export function buildASMETable() {
+  let table = "ASME B36.10 ytre diameter (mm): ";
+  table += Object.entries(ASME_OD).map(([dn, od]) => `DN${dn}=${od}`).join(", ");
+  table += "\nASME B16.9 bend-radius LR (mm): ";
+  table += Object.entries(ASME_BEND_RADIUS_LR).map(([dn, r]) => `DN${dn}=${r}`).join(", ");
+  table += "\nGodstykkelse SCH40 (mm): ";
+  table += Object.entries(ASME_WALL_SCH40).map(([dn, w]) => `DN${dn}=${w}`).join(", ");
+  return table;
+}
+
 const DIRECTION_VECTORS = {
   "N":[0,1,0], "NE":[0.707,0.707,0], "E":[1,0,0], "SE":[0.707,-0.707,0],
   "S":[0,-1,0], "SW":[-0.707,-0.707,0], "W":[-1,0,0], "NW":[-0.707,0.707,0],
