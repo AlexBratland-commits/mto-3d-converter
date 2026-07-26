@@ -2,8 +2,9 @@ import { useState, useEffect } from "react";
 import Tesseract from "tesseract.js";
 import * as pdfjsLib from "pdfjs-dist";
 import { safeParseJSON } from "../services/parseUtils";
+import { calculateAbsoluteCoordinatesLinear, buildRouteFromGraph, validateTopologyRules, validateContinuityLinear, normalizeComponentName, normalizeRouteItem } from "../services/geometryEngine";
+import { getSystemPrompt, getUserPrompt, getLomPrompt } from "../services/aiPrompts";
 
-// Sett opp worker for pdfjs-dist
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
   import.meta.url
@@ -13,9 +14,6 @@ export function isPdfFile(file) {
   return file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
 }
 
-/**
- * Usynlig konvertering av PDF til høyoppløselige PNG-bilder i minnet
- */
 export async function convertPdfToImageFiles(pdfFile, { maxWidthPx = 2200 } = {}) {
   const buffer = await pdfFile.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
@@ -42,325 +40,91 @@ export async function convertPdfToImageFiles(pdfFile, { maxWidthPx = 2200 } = {}
   return imageFiles;
 }
 
-const ASME_OD = { 50:60.3, 80:88.9, 100:114.3, 150:168.3, 200:219.1, 250:273.0, 300:323.9, 350:355.6, 400:406.4, 450:457.2, 500:508.0, 600:609.6 };
-const ASME_BEND_RADIUS_LR = { 50:76, 80:114, 100:152, 150:229, 200:305, 250:381, 300:457, 350:533, 400:610, 450:686, 500:762, 600:914 };
-const ASME_WALL_SCH40 = { 50:3.9, 80:5.5, 100:6.0, 150:7.1, 200:8.2, 250:9.3, 300:10.3, 350:11.1, 400:12.7, 450:14.3, 500:15.1, 600:17.5 };
-
-const ASME_LENGTHS = {
-  Flange: { 50: 20, 80: 22, 100: 24, 150: 26, 200: 30, 250: 32, 300: 34 },
-  Valve: { 50: 178, 80: 203, 100: 229, 150: 267, 200: 292, 250: 330, 300: 356 },
-  Reducer: { 50: 76, 80: 86, 100: 102, 150: 146, 200: 178, 250: 216, 300: 254 },
-  Tee: { 50: 76, 80: 86, 100: 105, 150: 143, 200: 178, 250: 216, 300: 254 },
-  Weldlet: { 50: 30, 80: 35, 100: 40, 150: 50, 200: 60, 250: 70, 300: 80 },
-  Nipple: { 50: 100, 80: 100, 100: 100, 150: 150, 200: 150 },
-  'Drip Ring': { 50: 40, 80: 40, 100: 40, 150: 40, 200: 40 },
-  'Spectacle Blind': { 50: 30, 80: 30, 100: 30, 150: 30, 200: 30 }
+const correctionMap = {
+  'SPECTACLE BLIND': 'FLANGE',
+  'BLIND FLANGE': 'FLANGE',
+  'BLIND': 'FLANGE',
+  'WELDLET': 'NIPPLE',
+  'SOCKOLET': 'NIPPLE',
+  'THREDOLET': 'NIPPLE'
 };
 
-function estimateComponentLength(type, dn) {
-  const table = ASME_LENGTHS[type];
-  if (!table) return 50;
-  if (table[dn] !== undefined) return table[dn];
+const mergeAndCalculate = (lomItems, routeItems, originPoint) => {
+  const cleanSize = (s) => String(s || 'ANY').toUpperCase().replace(/\s+/g, '');
 
-  const knownDns = Object.keys(table).map(Number).filter((n) => !isNaN(n));
-  if (knownDns.length === 0) return 50;
+  const lomNormalized = lomItems
+    .map(i => ({ ...i, normalizedType: normalizeComponentName(i.component), normalizedSize: cleanSize(i.size_dn_nps || i.size) }))
+    .filter(i => i.normalizedType !== 'Fastener');
 
-  const nearestDn = knownDns.reduce(
-    (best, d) => (Math.abs(d - dn) < Math.abs(best - dn) ? d : best),
-    knownDns[0]
-  );
-
-  const odNearest = ASME_OD[nearestDn] || Math.round(nearestDn * 1.15 * 10) / 10;
-  const odTarget = ASME_OD[dn] || Math.round(dn * 1.15 * 10) / 10;
-  
-  if (odNearest && odTarget) {
-    const estimated = Math.round(table[nearestDn] * (odTarget / odNearest));
-    return estimated;
-  }
-  return table[nearestDn] || 50;
-}
-
-function buildASMETable() {
-  let table = "ASME B36.10 ytre diameter (mm): ";
-  table += Object.entries(ASME_OD).map(([dn, od]) => `DN${dn}=${od}`).join(", ");
-  table += "\nASME B16.9 bend-radius LR (mm): ";
-  table += Object.entries(ASME_BEND_RADIUS_LR).map(([dn, r]) => `DN${dn}=${r}`).join(", ");
-  table += "\nGodstykkelse SCH40 (mm): ";
-  table += Object.entries(ASME_WALL_SCH40).map(([dn, w]) => `DN${dn}=${w}`).join(", ");
-  return table;
-}
-
-function normalizeComponentName(name) {
-  const n = (name || '').toUpperCase();
-  if (n.includes('ELBOW') || n.includes('BEND')) return 'Bend';
-  if (n.includes('FLANGE')) return 'Flange';
-  if (n.includes('VALVE') || n.includes('BLOCK')) return 'Valve';
-  if (n.includes('PIPE')) return 'Pipe';
-  if (n.includes('WELDLET') || n.includes('OLET')) return 'Weldlet';
-  if (n.includes('REDUCER')) return 'Reducer';
-  if (n.includes('TEE')) return 'Tee';
-  if (n.includes('NIPPLE')) return 'Nipple';
-  if (n.includes('DRIP')) return 'Drip Ring';
-  if (n.includes('SPECT') || n.includes('BLIND')) return 'Spectacle Blind';
-  if (n.includes('GASKET') || n.includes('STUD') || n.includes('BOLT') || n.includes('NUT')) return 'Fastener';
-  return n.trim(); // FIX: returner alltid store bokstaver
-}
-
-const ROUTE_KEY_ALIASES = {
-  cf: 'connects_from', comp: 'component', dn: 'size_dn_nps',
-  dir: 'direction', len: 'length_mm', ins: 'insulation_thickness_mm',
-  sch: 'schedule', conf: 'confidence', src: 'source',
-};
-function normalizeRouteItem(raw) {
-  if (!raw || typeof raw !== 'object') return raw;
-  const out = {};
-  Object.entries(raw).forEach(([k, v]) => { out[ROUTE_KEY_ALIASES[k] || k] = v; });
-  return out;
-}
-
-function normalizeDirKey(raw) {
-  if (!raw) return null;
-  const s = String(raw).trim().toUpperCase().replace(/[\s->_]+/g, '-');
-  const map = { 'N':'N','NORTH':'N','S':'S','SOUTH':'S','E':'E','EAST':'E','W':'W','WEST':'W','NE':'NE','NORTHEAST':'NE','NW':'NW','NORTHWEST':'NW','SE':'SE','SOUTHEAST':'SE','SW':'SW','SOUTHWEST':'SW','UP':'UP','UPWARD':'UP','U':'UP','DOWN':'DOWN','DOWNWARD':'DOWN','DN':'DOWN','D':'DOWN' };
-  return map[s] || s;
-}
-
-const DIRECTION_VECTORS = {
-  "N":[0,1,0], "NE":[0.707,0.707,0], "E":[1,0,0], "SE":[0.707,-0.707,0],
-  "S":[0,-1,0], "SW":[-0.707,-0.707,0], "W":[-1,0,0], "NW":[-0.707,0.707,0],
-  "UP":[0,0,1], "DOWN":[0,0,-1]
-};
-
-const HORIZONTAL_DIRS = ["N", "S", "E", "W", "NE", "NW", "SE", "SW"];
-
-function getVector(dir) { const key = normalizeDirKey(dir); return DIRECTION_VECTORS[key] || null; }
-
-function parseBendParts(directionStr) {
-  const s = String(directionStr || '').trim().toUpperCase().replace(/[\s->_]+/g, '-');
-  const parts = s.split('-TO-'); if (parts.length === 2) return [parts[0], parts[1]];
-  const short = s.split('-'); if (short.length === 2) return [short[0], short[1]];
-  return null;
-}
-
-function placeShortOffset(comp, origin, direction, incomingZ) {
-  const { x:ox, y:oy, z:oz } = origin;
-  const dir = comp.direction || direction;
-  const vec = getVector(dir) || [1,0,0];
-
-  const dn = parseInt(String(comp.size_dn_nps||'').replace(/DN/i,''))||100;
-  const dist = estimateComponentLength(comp.component, dn);
-
-  const isHorizontal = HORIZONTAL_DIRS.includes(normalizeDirKey(dir));
-  const startZ = isHorizontal ? incomingZ : oz;
-  const endZ = isHorizontal ? incomingZ : oz + vec[2]*dist;
-
-  return { 
-      start:{x:ox,y:oy,z:startZ}, 
-      end:{x:ox+vec[0]*dist,y:oy+vec[1]*dist,z:endZ}, 
-      direction: dir,
-      outZ: endZ 
-  };
-}
-
-function placePipe(comp, origin, direction, incomingZ) {
-  const { x:ox, y:oy, z:oz } = origin;
-  const dir = comp.direction || direction;
-  const vec = getVector(dir) || [0,0,0];
-  const len = comp.length_mm || 500;
-
-  const isHorizontal = HORIZONTAL_DIRS.includes(normalizeDirKey(dir));
-  const startZ = isHorizontal ? incomingZ : oz;
-  const endZ = isHorizontal ? incomingZ : oz + vec[2]*len;
-
-  return { 
-      start:{x:ox,y:oy,z:startZ}, 
-      end:{x:ox+vec[0]*len,y:oy+vec[1]*len,z:endZ}, 
-      direction:normalizeDirKey(dir)||dir,
-      outZ: endZ
-  };
-}
-
-function placeBend(comp, origin, direction, incomingZ) {
-  const { x:ox, y:oy, z:oz } = origin;
-  if (!comp.direction) return { start:{x:ox,y:oy,z:oz}, end:{x:ox,y:oy,z:oz}, direction, outZ: incomingZ };
-  
-  const dn = parseInt(String(comp.size_dn_nps||'').replace(/DN/i,''))||100;
-  const bendR = ASME_BEND_RADIUS_LR[dn]||150;
-  const parts = parseBendParts(comp.direction);
-  const from = parts?parts[0]:normalizeDirKey(direction)||direction;
-  const to = parts?parts[1]:normalizeDirKey(direction)||direction;
-  
-  const fv = getVector(from)||[0,0,0], tv = getVector(to)||[0,0,0];
-  
-  const dot = fv[0]*tv[0] + fv[1]*tv[1] + fv[2]*tv[2];
-  const angle = Math.acos(Math.min(1, Math.max(-1, dot)));
-  let T = bendR * Math.tan(angle / 2);
-  if (isNaN(T) || !isFinite(T)) T = bendR;
-
-  const isOutHorizontal = HORIZONTAL_DIRS.includes(normalizeDirKey(to));
-  const startZ = isOutHorizontal ? incomingZ : oz;
-  const endZ = isOutHorizontal ? incomingZ : oz + (fv[2]+tv[2])*T;
-  
-  return { 
-      start: {x:ox, y:oy, z:startZ}, 
-      end: {x:ox+(fv[0]+tv[0])*T, y:oy+(fv[1]+tv[1])*T, z:endZ}, 
-      direction: to,
-      outZ: endZ
-  };
-}
-
-const PLACERS = { 
-  Pipe: (c,o,d,z) => placePipe(c,o,d,z), 
-  Bend: (c,o,d,z) => placeBend(c,o,d,z), 
-  Flange: (c,o,d,z) => placeShortOffset(c,o,d,z), 
-  Weldlet: (c,o,d,z) => placeShortOffset(c,o,d,z), 
-  Reducer: (c,o,d,z) => placeShortOffset(c,o,d,z), 
-  Tee: (c,o,d,z) => placeShortOffset(c,o,d,z), 
-  Valve: (c,o,d,z) => placeShortOffset(c,o,d,z),
-  Nipple: (c,o,d,z) => placeShortOffset(c,o,d,z),
-  'Drip Ring': (c,o,d,z) => placeShortOffset(c,o,d,z),
-  'Spectacle Blind': (c,o,d,z) => placeShortOffset(c,o,d,z)
-};
-
-function placeComponent(comp, origin, incomingDirection, incomingZ) {
-  const placer = PLACERS[comp.component];
-  if (!placer) { 
-      const {x,y,z} = origin; 
-      return {start:{x,y,z}, end:{x,y,z}, direction:incomingDirection, outZ: incomingZ}; 
-  }
-  return placer(comp, origin, incomingDirection, incomingZ);
-}
-
-function calculateAbsoluteCoordinatesLinear(components, originOffset = { x:0, y:0, z:0 }) {
-  let x = originOffset.x, y = originOffset.y, z = originOffset.z;
-  let currentDirection = null;
-  let currentZ = z;
-  
-  return components.map((comp) => {
-    const placed = placeComponent(comp, { x, y, z }, currentDirection, currentZ);
-    x = placed.end.x; 
-    y = placed.end.y; 
-    z = placed.end.z; 
-    currentDirection = placed.direction;
-    currentZ = placed.outZ !== undefined ? placed.outZ : currentZ;
-    
-    return { ...comp, start_x: placed.start.x, start_y: placed.start.y, start_z: placed.start.z, end_x: x, end_y: y, end_z: z };
+  const lomMap = {};
+  lomNormalized.forEach(i => { 
+    const k = `${i.normalizedType}_${i.normalizedSize}`; 
+    if (!lomMap[k]) lomMap[k] = { expected: 0, found: 0, component: i.normalizedType, size: i.normalizedSize }; 
+    lomMap[k].expected += Number(i.quantity) || 1; 
   });
-}
 
-function validateContinuityLinear(components) {
-  if (!components || components.length < 2) return [];
-  const issues = [];
-  for (let i = 0; i < components.length - 1; i++) {
-    const c = components[i], n = components[i + 1];
-    if (!c || !n) continue;
-    const dx = (n.start_x || 0) - (c.end_x || 0), dy = (n.start_y || 0) - (c.end_y || 0), dz = (n.start_z || 0) - (c.end_z || 0);
-    const gap = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (gap > 5) issues.push({ index: i, gap: Math.round(gap), currComp: c.component || '?', nextComp: n.component || '?', suggestion: gap > 100 ? "Manglende rør" : "Lite gap" });
-  }
-  return issues;
-}
+  const routeNormalized = routeItems.map(i => ({ ...i, normalizedType: normalizeComponentName(i.component || ''), normalizedSize: cleanSize(i.size_dn_nps || i.size) }));
 
-function buildRouteFromGraph(components, originOffset = { x:0, y:0, z:0 }) {
-  const topologyWarnings = [];
-  const hasGraphSchema = components.some(c => c.id !== undefined && c.id !== null && c.id !== "");
-  if (!hasGraphSchema) {
-    return { components: calculateAbsoluteCoordinatesLinear(components, originOffset), topologyWarnings, continuityIssues: [], usedGraphSchema: false };
-  }
+  let lomIssues = [];
+  let extraIssues = [];
 
-  const byId = new Map();
-  components.forEach(c => { if (c.id !== undefined && c.id !== null) byId.set(String(c.id), c); });
+  const routeMap = {};
+  routeNormalized.forEach(i => { 
+    const k = `${i.normalizedType}_${i.normalizedSize}`;
+    if (!routeMap[k]) routeMap[k] = { found: 0, component: i.normalizedType, size: i.normalizedSize };
+    routeMap[k].found++;
+  });
 
-  const isRoot = (c) => !c.connects_from || c.connects_from === "START" || !byId.has(String(c.connects_from));
-  const roots = components.filter(isRoot);
+  Object.keys(lomMap).forEach(k => {
+    if (routeMap[k]) lomMap[k].found = routeMap[k].found;
+  });
 
-  if (roots.length > 1) topologyWarnings.push(`Fant ${roots.length} frittstående rørløp uten forbindelse til hverandre. Sjekk om det mangler en kobling.`);
-  if (roots.length === 0 && components.length > 0) {
-    return { components: calculateAbsoluteCoordinatesLinear(components, originOffset), topologyWarnings: ["Ingen gyldig startpunkt – fallback til lineær."], continuityIssues: [], usedGraphSchema: false };
-  }
+  Object.entries(lomMap).forEach(([k, v]) => {
+    if (v.component === 'Pipe') return;
+    if (v.found < v.expected) lomIssues.push({ key: k, component: v.component, size: v.size, expected: v.expected, found: v.found, missing: v.expected - v.found });
+  });
 
-  const childrenOf = new Map();
-  components.forEach(c => { if (!isRoot(c)) { const pk = String(c.connects_from); if (!childrenOf.has(pk)) childrenOf.set(pk, []); childrenOf.get(pk).push(c); } });
-
-  const resolved = new Map(), visited = new Set();
-  
-  roots.forEach((root, chainIndex) => {
-    const offset = { x: originOffset.x + chainIndex * 3000, y: originOffset.y, z: originOffset.z };
-    const queue = [{ comp: root, origin: offset, direction: null, z: offset.z }];
-    
-    while (queue.length) {
-      const { comp, origin, direction, z } = queue.shift();
-      const ik = comp.id !== undefined ? String(comp.id) : null;
-      if (ik && visited.has(ik)) continue;
-      if (ik) visited.add(ik);
-      
-      const placed = placeComponent(comp, origin, direction, z);
-      if (ik) resolved.set(ik, placed);
-      
-      const kids = ik ? (childrenOf.get(ik) || []) : [];
-      kids.forEach(k => queue.push({ comp: k, origin: placed.end, direction: placed.direction, z: placed.outZ }));
+  Object.entries(routeMap).forEach(([k, v]) => {
+    if (v.component === 'Pipe') return;
+    if (!lomMap[k]) {
+      extraIssues.push({ key: k, component: v.component, size: v.size, found: v.found, extra: v.found });
     }
   });
 
-  const withCoords = components.map(c => {
-    const ik = c.id !== undefined ? String(c.id) : null;
-    if (ik && resolved.has(ik)) {
-      const r = resolved.get(ik);
-      return { ...c, start_x: r.start.x, start_y: r.start.y, start_z: r.start.z, end_x: r.end.x, end_y: r.end.y, end_z: r.end.z };
-    }
-    return { ...c, start_x: 0, start_y: 0, start_z: 0, end_x: 0, end_y: 0, end_z: 0, _unplaced: true };
-  });
+  // Kjør Auto-Correct
+  if (extraIssues.length > 0 && lomIssues.length > 0) {
+    extraIssues.forEach((extra) => {
+      const targetComponent = correctionMap[extra.component];
+      if (targetComponent) {
+        const missingIndex = lomIssues.findIndex(m => m.component === targetComponent && m.size === extra.size && m.missing > 0);
+        if (missingIndex !== -1) {
+          const missing = lomIssues[missingIndex];
+          const compToFix = routeNormalized.find(c => 
+            normalizeComponentName(c.component) === extra.component && 
+            cleanSize(c.size_dn_nps || c.size) === extra.size
+          );
 
-  const byIdWithCoords = new Map();
-  withCoords.forEach(c => { if (c.id !== undefined) byIdWithCoords.set(String(c.id), c); });
-
-  const continuityIssues = [];
-  withCoords.forEach((curr, i) => {
-    if (curr.connects_from && curr.connects_from !== "START") {
-      const parent = byIdWithCoords.get(String(curr.connects_from));
-      if (parent && !curr._unplaced && !parent._unplaced) {
-        const dx = curr.start_x - parent.end_x, dy = curr.start_y - parent.end_y, dz = curr.start_z - parent.end_z;
-        const gap = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (gap > 5) {
-          continuityIssues.push({
-            index: i, gap: Math.round(gap), currComp: parent.component || '?', nextComp: curr.component || '?',
-            suggestion: gap > 100 ? "AI bommet betydelig før auto-korrigering – sjekk manuelt" : "Lite gap – trolig avrunding",
-          });
+          if (compToFix) {
+            compToFix.component = targetComponent.charAt(0) + targetComponent.slice(1).toLowerCase();
+            compToFix._autoFixed = true;
+            missing.missing--;
+            missing.found++;
+            if (missing.missing === 0) lomIssues.splice(missingIndex, 1);
+            extra.fixed = true;
+          }
         }
-        curr.start_x = parent.end_x; curr.start_y = parent.end_y; curr.start_z = parent.end_z;
       }
-    }
-  });
+    });
+    extraIssues = extraIssues.filter(e => !e.fixed);
+  }
 
-  const unplacedCount = withCoords.filter(c => c._unplaced).length;
-  if (unplacedCount > 0) topologyWarnings.push(`${unplacedCount} komponenter manglet gyldig id/connects_from og ble ikke plassert.`);
+  const { components: withCoords, topologyWarnings, continuityIssues: graphContinuityIssues, usedGraphSchema } = buildRouteFromGraph(routeNormalized, originPoint);
+  const ruleWarnings = validateTopologyRules(routeNormalized);
+  const continuityIssues = usedGraphSchema ? graphContinuityIssues : validateContinuityLinear(withCoords);
+  const reconciliationStatus = (lomIssues.length === 0 && extraIssues.length === 0 && continuityIssues.length === 0) ? 'safe' : 'deviation';
 
-  return { components: withCoords, topologyWarnings, continuityIssues, usedGraphSchema: true };
-}
-
-function validateTopologyRules(components) {
-  const warnings = [], childrenOf = new Map();
-  components.forEach(c => { if (c.connects_from && c.connects_from !== "START") { const k = String(c.connects_from); if (!childrenOf.has(k)) childrenOf.set(k, []); childrenOf.get(k).push(c); } });
-  components.forEach((c, i) => {
-    if (c.component === 'Bend' && c.direction) { const p = parseBendParts(c.direction); if (p && p[0] === p[1]) warnings.push(`Bend #${i + 1}: retning endrer seg ikke.`); }
-    if (c.component === 'Reducer' && c.id !== undefined) { const kids = childrenOf.get(String(c.id)) || []; kids.forEach(n => { if (n && n.size_dn_nps && c.size_dn_nps && n.size_dn_nps === c.size_dn_nps) warnings.push(`Reducer #${i + 1}: samme DN før og etter.`); }); }
-  });
-  return warnings;
-}
-
-function buildExpectedCountsChecklist(lomItems) {
-  if (!lomItems || !lomItems.length) return "";
-  const counts = {};
-  lomItems.forEach(i => {
-    const type = normalizeComponentName(i.component);
-    if (type === 'Fastener' || type === 'Pipe') return;
-    const key = `${type} ${i.size_dn_nps || ''}`.trim();
-    counts[key] = (counts[key] || 0) + (Number(i.quantity) || 1);
-  });
-  const lines = Object.entries(counts).map(([k, v]) => `- ${k}: ${v} stk`).join("\n");
-  if (!lines) return "";
-  return `\nFØR du svarer: materiallisten sier at rørtraséen skal inneholde omtrent:\n${lines}\nVIKTIG: dette er en kontrolliste over synlige komponenter. Hvis du ser komponenter fra denne listen på tegningen, skal de være med i JSON selv om de er små, ligger på avgreninger eller ikke er på hovedrøret.\n`;
-}
+  return { components: withCoords, lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, usedGraphSchema, reconciliationStatus };
+};
 
 export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiKey, externalLomItems, projectSettings, onSettingsChange }) {
   const [files, setFiles] = useState([]);
@@ -408,45 +172,19 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
   const runOCR = async (file) => { const { data } = await Tesseract.recognize(file, "eng", { logger: (m) => { if (m.status === "recognizing text") setOcrProgress(`OCR: ${Math.round(m.progress * 100)}% på ${file.name}`); } }); return data.text; };
 
   const extractLOM = async (bases, ocrTexts) => {
-    const customStandardsSection = customStandards ? `\nEGENDERFINERTE STANDARDER OG SPESIFIKASJONER:\n${customStandards}\n` : "";
-
-    const lomPrompt = `Les "List of Materials" / MTO-tabellen fra denne ISO-tegningen.
-
-VIKTIG: Finn også referansepunktet (Tie-in Point / Origin Coordinate) fra tegningshodet.
-Returner dette som et eget felt "reference_point":
-"reference_point": { "point_name": "F11", "east_X": 360142, "north_Y": 171879, "elevation_Z": 530337 }
-
-Returner et JSON-objekt:
-{
-  "reference_point": { "point_name": "F11", "east_X": 360142, "north_Y": 171879, "elevation_Z": 530337 },
-  "mto_items": [
-     { "item_no": "1", "quantity": 4, "component": "PIPE", "size_dn_nps": "DN250", "schedule": "40S", "material": "A106-B" }
-  ]
-}
-
-KRITISK FOR "quantity": Du MÅ lese tallet som står i "QTY" eller "QUANT"-kolonnen i tabellen på bildet. 
-- Hvis tabellen viser 4 for en komponent, MÅ du sette "quantity": 4.
-- Hvis tabellen viser 16, setter du "quantity": 16.
-- Bruk KUN "quantity": 1 hvis tabellen faktisk viser 1, eller hvis kolonnen mangler helt.
-- IKKE kopier eksempelet over (hvor det står 4), men bruk de faktiske tallene fra bildet/OCR-teksten!
-
- ${customStandardsSection}${ocrTexts.length > 0 ? "OCR-tekst:\n" + ocrTexts.map(ot => ot.text).join("\n") : ""}`;
-
+    const lomPrompt = getLomPrompt(customStandards, ocrTexts);
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': window.location.href, 'X-Title': 'MTO 3D' },
       body: JSON.stringify({ 
         model, 
         messages: [{ role: 'user', content: [{ type: "text", text: lomPrompt }, ...bases.map(b => ({ type: "image_url", image_url: { url: `data:${b.mime};base64,${b.base64}`, detail: "high" } }))] }], 
-        max_tokens: 4096, 
-        temperature: 0.05,
-        response_format: { type: "json_object" }
+        max_tokens: 4096, temperature: 0.05, response_format: { type: "json_object" }
       })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error?.message || 'LOM-feil');
 
     const parsed = safeParseJSON(data.choices?.[0]?.message?.content);
-
     let refPoint = { x: 0, y: 0, z: 0 };
     let items = [];
 
@@ -467,78 +205,8 @@ KRITISK FOR "quantity": Du MÅ lese tallet som står i "QTY" eller "QUANT"-kolon
   };
 
   const extractRoute = async (bases, ocrTexts, lomItems, retryCount = 0) => {
-    const orientationInfo = {
-      elevation: "Tegningen er en isometrisk tegning. Opp på papiret er normalt HØYDE (Z-akse), men DIAGONALE skrålinjer er X/Y.",
-      north: "Opp = geografisk nord (Y+).",
-      east: "Opp = geografisk øst.",
-      south: "Opp = geografisk sør.",
-      west: "Opp = geografisk vest."
-    };
-
-    const detectedSizes = lomItems && lomItems.length > 0
-      ? Array.from(new Set(lomItems.map(item => item.size || item.size_dn_nps).filter(Boolean))).join(", ")
-      : null;
-
-    const sizeInstruction = detectedSizes
-      ? `Bruk KUN dimensjoner som finnes i MTO-listen: [${detectedSizes}].`
-      : "Ingen MTO-liste er tilgjengelig for kryssjekk denne gangen – les dimensjonen direkte fra tegningens dimensjonslinjer/merkinger, uten å begrense deg til noen forhåndsdefinert liste.";
-
-    const systemPrompt = `Du er en ren data-ekstraksjons-maskin for isometriske rørtegninger (ISO).
-Du må kun returnere gyldig JSON på formen: {"components": [...]}.
-
-Format-eksempel:
-{"components": [
-  {"id":"1","connects_from":"START","component":"Pipe","size_dn_nps":"DN80","direction":"E","length_mm":2000,"confidence":0.9,"source":"dimension_line"}
-]}
-
-Hvis du overhodet ikke finner data, returner {"components": []}
-
-ISOMETRIC DRAWING INTERPRETATION RULES:
-This drawing is an isometric projection.
-Projection on paper is NOT elevation.
-Rules:
-1. A 30° diagonal line on paper NEVER represents elevation. It only represents horizontal pipe routing.
-2. Only TRUE vertical lines on the page represent Z-axis movement.
-3. Keep the current Z elevation unless one of these exists:
-   - a vertical pipe
-   - a vertical elbow
-   - explicit elevation annotation
-   - explicit UP or DOWN direction
-4. Do NOT infer elevation from perspective.
-5. Main pipeline shall remain at constant elevation unless explicit evidence indicates otherwise.
-If uncertain, keep Z unchanged.
-
-BEND OG RETNINGSENDRINGER:
-- For bend: sett direction til "FraRetning-to-TilRetning". F.eks. "E-to-N", "N-to-UP", "UP-to-W".
-
-LENGDER:
-- Les av avstanden fra dimensjonslinjene på tegningen i mm og legg inn i "length_mm".`;
-
-    const userPrompt = `Følg HELE rørtraséen på denne ISO-tegningen fra start til slutt. Inkluder ALLE komponenter: rør, bend, flenser, ventiler, weldlets, reduksjoner, T-rør, drip rings og blindflenser.
-
-For hvert segment, returner:
-- id: unik id (f.eks. "1", "2", "3"...).
-- connects_from: id-en til forrige komponent, eller "START".
-- component: "Pipe", "Bend", "Flange", "Valve", "Weldlet", "Reducer", "Tee", "Drip Ring", "Spectacle Blind", "Nipple".
-- size_dn_nps: ${sizeInstruction}
-- direction: "N"/"NE"/"E"/"SE"/"S"/"SW"/"W"/"NW"/"UP"/"DOWN". For bend: "N-to-E" etc.
-- length_mm: KUN for Pipe – les fra dimensjonslinjen i mm.
-- insulation_thickness_mm: 0 eller les fra notat.
-- schedule: les fra MTO/notat eller "40" som standard.
-- confidence: 0.0-1.0.
-- source: "dimension_line", "material_table", "inferred", eller "field_marking".
-
-VIKTIG: IKKE begrens deg til hovedrøret. Inkluder også alle synlige avgreninger (f.eks. drenering/lufting), korte komponenter og tilbehør på tegningen. Bruk MTO-sjekklisten under som kontrolliste: hvis en komponent står i MTO og er synlig på tegningen, SKAL den være med i JSON!
-
-VIKTIG ORIENTERINGS-REGLER:
- ${orientationInfo[orientation] || orientationInfo.elevation}
-
- ${buildASMETable()}
- ${customStandards ? `\nEGENDERFINERTE STANDARDER OG SPESIFIKASJONER:\n${customStandards}\n` : ""}
- ${ocrTexts && ocrTexts.length > 0 ? `OCR-tekst (bruk dette som FASIT for tall, bokstaver og linjenumre der det er lesbart – bruk BILDET for geometri, plassering og retning):\n` + ocrTexts.map(ot => ot.text).join("\n") : ""}
- ${buildExpectedCountsChecklist(lomItems)}
-
-Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT ABSOLUTTE KOORDINATER – kun relative retninger og lengder.`;
+    const systemPrompt = getSystemPrompt();
+    const userPrompt = getUserPrompt(orientation, customStandards, ocrTexts, lomItems);
 
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -562,7 +230,6 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
     }
 
     const parsed = safeParseJSON(data.choices?.[0]?.message?.content);
-
     let items;
     if (Array.isArray(parsed)) {
       items = parsed;
@@ -573,115 +240,6 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
     }
 
     return items.map(normalizeRouteItem);
-  };
-
-  // EXPERT FIX: Regelmotor for Auto-Correct (ChatGPT forslaget)
-  const correctionMap = {
-    'SPECTACLE BLIND': 'FLANGE',
-    'BLIND FLANGE': 'FLANGE',
-    'BLIND': 'FLANGE',
-    'WELDLET': 'NIPPLE',
-    'SOCKOLET': 'NIPPLE',
-    'THREDOLET': 'NIPPLE'
-  };
-
-  const mergeAndCalculate = (lomItems, routeItems, originPoint) => {
-    const cleanSize = (s) => String(s || 'ANY').toUpperCase().replace(/\s+/g, '');
-
-    const lomNormalized = lomItems
-      .map(i => ({ 
-        ...i, 
-        normalizedType: normalizeComponentName(i.component),
-        normalizedSize: cleanSize(i.size_dn_nps || i.size)
-      }))
-      .filter(i => i.normalizedType !== 'Fastener');
-
-    const lomMap = {};
-    lomNormalized.forEach(i => { 
-      const k = `${i.normalizedType}_${i.normalizedSize}`; 
-      if (!lomMap[k]) lomMap[k] = { expected: 0, found: 0, component: i.normalizedType, size: i.normalizedSize }; 
-      lomMap[k].expected += Number(i.quantity) || 1; 
-    });
-
-    const routeNormalized = routeItems.map(i => ({ 
-      ...i, 
-      normalizedType: normalizeComponentName(i.component || ''),
-      normalizedSize: cleanSize(i.size_dn_nps || i.size)
-    }));
-
-    // 1. Identifiser mangler og ekstra before correction
-    let lomIssues = [];
-    let extraIssues = [];
-
-    const routeMap = {};
-    routeNormalized.forEach(i => { 
-      const k = `${i.normalizedType}_${i.normalizedSize}`;
-      if (!routeMap[k]) routeMap[k] = { found: 0, component: i.normalizedType, size: i.normalizedSize };
-      routeMap[k].found++;
-    });
-
-    Object.keys(lomMap).forEach(k => {
-      if (routeMap[k]) lomMap[k].found = routeMap[k].found;
-    });
-
-    Object.entries(lomMap).forEach(([k, v]) => {
-      if (v.component === 'Pipe') return;
-      if (v.found < v.expected) lomIssues.push({ key: k, component: v.component, size: v.size, expected: v.expected, found: v.found, missing: v.expected - v.found });
-    });
-
-    Object.entries(routeMap).forEach(([k, v]) => {
-      if (v.component === 'Pipe') return;
-      if (!lomMap[k]) {
-        extraIssues.push({ key: k, component: v.component, size: v.size, found: v.found, extra: v.found });
-      }
-    });
-
-    // 2. KJØR AUTO-CORRECT LOGIKK
-    if (extraIssues.length > 0 && lomIssues.length > 0) {
-      extraIssues.forEach((extra) => {
-        const targetComponent = correctionMap[extra.component];
-        if (targetComponent) {
-          // Se etter en matchende 'mangler' issue med samme størrelse
-          const missingIndex = lomIssues.findIndex(m => m.component === targetComponent && m.size === extra.size && m.missing > 0);
-          if (missingIndex !== -1) {
-            const missing = lomIssues[missingIndex];
-            
-            // Finn selve komponentobjektet i ruta og endre det
-            const compToFix = routeNormalized.find(c => 
-              normalizeComponentName(c.component) === extra.component && 
-              cleanSize(c.size_dn_nps || c.size) === extra.size
-            );
-
-            if (compToFix) {
-              compToFix.component = targetComponent.charAt(0) + targetComponent.slice(1).toLowerCase(); // E.g. "Flange"
-              compToFix._autoFixed = true; // Setter flagg for UI
-              
-              // Oppdater mangel-listen
-              missing.missing--;
-              missing.found++;
-              if (missing.missing === 0) {
-                lomIssues.splice(missingIndex, 1);
-              }
-
-              // Fjern fra ekstra-listen (marker som fikset)
-              extra.fixed = true;
-            }
-          }
-        }
-      });
-      
-      // Rensk ekstra-listen for fikset elementer
-      extraIssues = extraIssues.filter(e => !e.fixed);
-    }
-
-    const { components: withCoords, topologyWarnings, continuityIssues: graphContinuityIssues, usedGraphSchema } = buildRouteFromGraph(routeNormalized, originPoint);
-    
-    const ruleWarnings = validateTopologyRules(routeNormalized);
-    const continuityIssues = usedGraphSchema ? graphContinuityIssues : validateContinuityLinear(withCoords);
-
-    const reconciliationStatus = (lomIssues.length === 0 && extraIssues.length === 0 && continuityIssues.length === 0) ? 'safe' : 'deviation';
-
-    return { components: withCoords, lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, usedGraphSchema, reconciliationStatus };
   };
 
   const handleUpload = async () => {
@@ -745,12 +303,8 @@ Returner et JSON-objekt på formen {"components": [...]}. DU SKAL IKKE REGNE UT 
         const fallbackComponents = calculateAbsoluteCoordinatesLinear(routeItems, referencePoint);
         mergeResult = { 
           components: fallbackComponents.map(c => ({ ...c, schedule: c.schedule || "40" })), 
-          lomIssues: [], 
-          extraIssues: [], 
-          topologyWarnings: ["Kunne ikke bygge graf-struktur, bruker lineær plassering (AI kan ha manglede ID-er)."], 
-          ruleWarnings: [], 
-          continuityIssues: [], 
-          reconciliationStatus: 'unknown' 
+          lomIssues: [], extraIssues: [], topologyWarnings: ["Kunne ikke bygge graf-struktur, bruker lineær plassering (AI kan ha manglede ID-er)."], 
+          ruleWarnings: [], continuityIssues: [], reconciliationStatus: 'unknown' 
         };
       }
       const { components, lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, reconciliationStatus } = mergeResult;
