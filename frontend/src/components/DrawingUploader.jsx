@@ -3,7 +3,7 @@ import Tesseract from "tesseract.js";
 import * as pdfjsLib from "pdfjs-dist";
 import { safeParseJSON } from "../services/parseUtils";
 import { calculateAbsoluteCoordinatesLinear, buildRouteFromGraph, validateTopologyRules, validateContinuityLinear, normalizeComponentName, normalizeRouteItem, sanitizeRouteGeometry } from "../services/geometryEngine";
-import { getSystemPrompt, getUserPrompt, getLomPrompt } from "../services/aiPrompts";
+import { getSystemPrompt, getUserPrompt, getLomPrompt, getTargetedRescanPrompt } from "../services/aiPrompts";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -311,6 +311,59 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
           ruleWarnings: [], continuityIssues: [], reconciliationStatus: 'unknown' 
         };
       }
+      // EXPERT FIX: PASS 4 - Targeted Re-scan for manglende komponenter
+      if (mergeResult.lomIssues && mergeResult.lomIssues.length > 0 && mergeResult.lomIssues.length <= 8) {
+        try {
+          console.log("PASS 4: Kjører målrettet nytt søk for manglende komponenter...", mergeResult.lomIssues);
+          const rescanPrompt = getTargetedRescanPrompt(mergeResult.lomIssues);
+          
+          const rescanRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': window.location.href, 'X-Title': 'MTO 3D' },
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: 'system', content: "Du er en assistent som kun leter etter spesifikke manglende komponenter på en ISO-tegning. Returner KUN JSON." },
+                { role: 'user', content: [{ type: "text", text: rescanPrompt }, ...bases.map(b => ({ type: "image_url", image_url: { url: `data:${b.mime};base64,${b.base64}`, detail: "high" } }))] }
+              ],
+              max_tokens: 2000,
+              temperature: 0.05,
+            })
+          });
+
+          const rescanData = await rescanRes.json();
+          if (rescanRes.ok) {
+            const rescanParsed = safeParseJSON(rescanData.choices?.[0]?.message?.content);
+            if (rescanParsed && Array.isArray(rescanParsed.components) && rescanParsed.components.length > 0) {
+              console.log("PASS 4: Fant ekstra komponenter!", rescanParsed.components);
+              
+              const maxId = sanitizedRouteItems.reduce((max, c) => Math.max(max, parseInt(c.id) || 0), 0);
+              
+              // QWEN FIX: Deduplisering - Sjekk om komponenten allerede finnes før vi legger den til
+              const existingKeys = new Set(sanitizedRouteItems.map(c => `${c.component}-${c.size_dn_nps}`));
+              const newItems = rescanParsed.components
+                .filter(c => !existingKeys.has(`${c.component}-${c.size_dn_nps}`))
+                .map((c, i) => ({
+                  ...c,
+                  id: String(maxId + i + 1),
+                  // La AI-en bestemme connects_from, hvis den mangler vil sanitizeRouteGeometry fikse det
+                  connects_from: c.connects_from || "", 
+                  schedule: c.schedule || "40"
+                }));
+                
+              if (newItems.length > 0) {
+                // Kjør sanitize og merge på nytt med de nye komponentene
+                const combinedRoute = [...sanitizedRouteItems, ...newItems];
+                const sanitizedCombined = sanitizeRouteGeometry(combinedRoute);
+                mergeResult = mergeAndCalculate(lomItems, sanitizedCombined, referencePoint);
+              }
+            }
+          }
+        } catch (rescanErr) {
+          console.warn("Pass 4 (Re-scan) feilet, fortsetter med opprinnelig resultat.", rescanErr);
+        }
+      }
+
       const { components, lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, reconciliationStatus } = mergeResult;
 
       const diagnostics = { lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, reconciliationStatus };
