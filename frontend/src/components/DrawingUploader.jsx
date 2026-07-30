@@ -171,9 +171,9 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
   };
   const runOCR = async (file) => { const { data } = await Tesseract.recognize(file, "eng", { logger: (m) => { if (m.status === "recognizing text") setOcrProgress(`OCR: ${Math.round(m.progress * 100)}% på ${file.name}`); } }); return data.text; };
 
-  const extractLOM = async (bases, ocrTexts) => {
+  const extractLOM = async (bases, ocrTexts, fetchFn = fetch) => {
     const lomPrompt = getLomPrompt(customStandards, ocrTexts);
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const res = await fetchFn('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': window.location.href, 'X-Title': 'MTO 3D' },
       body: JSON.stringify({ 
         model, 
@@ -204,11 +204,11 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
     return { lomItems: items, referencePoint: refPoint };
   };
 
-  const extractRoute = async (bases, ocrTexts, lomItems, retryCount = 0) => {
+  const extractRoute = async (bases, ocrTexts, lomItems, fetchFn = fetch, retryCount = 0) => {
     const systemPrompt = getSystemPrompt();
     const userPrompt = getUserPrompt(orientation, customStandards, ocrTexts, lomItems);
 
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const res = await fetchFn('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': window.location.href, 'X-Title': 'MTO 3D' },
       body: JSON.stringify({
@@ -226,7 +226,7 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
 
     if (data.choices[0].finish_reason === 'length' && retryCount < 1) {
       console.warn("ADVARSEL: AI-responsen ble trunkert – prøver på nytt med høyere max_tokens.");
-      return extractRoute(bases, ocrTexts, lomItems, retryCount + 1);
+      return extractRoute(bases, ocrTexts, lomItems, fetchFn, retryCount + 1);
     }
 
     const parsed = safeParseJSON(data.choices?.[0]?.message?.content);
@@ -247,7 +247,22 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
     setLoading(true); setOcrProgress("");
     setGlobalOrigin({ x: 0, y: 0, z: 0 });
 
+    // Hjelpefunksjon for å legge til timeout på API-kall
+    const fetchWithTimeout = async (url, options, timeoutMs = 90000) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        clearTimeout(timeoutId);
+        return res;
+      } catch (err) {
+        clearTimeout(timeoutId);
+        throw new Error("AI-kallet tok for lang tid (timeout) eller nettverket feilet.");
+      }
+    };
+
     try {
+      console.log("1/5: Forbereder filer...");
       setOcrProgress("Forbereder filer...");
       let processedFiles = [];
       for (const file of files) {
@@ -276,48 +291,54 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
 
       let lomItems = [];
       let referencePoint = { x: 0, y: 0, z: 0 };
+      
+      console.log("2/5: Sjekker MTO-tabell...");
       if (Array.isArray(externalLomItems) && externalLomItems.length > 0) {
         lomItems = externalLomItems;
       } else {
         try {
-          const lomResult = await extractLOM(bases, ocrTexts);
+          const lomResult = await extractLOM(bases, ocrTexts, fetchWithTimeout);
           lomItems = Array.isArray(lomResult.lomItems) ? lomResult.lomItems : [];
           referencePoint = lomResult.referencePoint || referencePoint;
         } catch (err) {
-          console.warn("LOM-ekstraksjon feilet, fortsetter uten MTO-sjekkliste:", err);
+          console.warn("MTO-ekstraksjon feilet, fortsetter uten MTO-sjekkliste:", err);
         }
       }
       setGlobalOrigin(referencePoint);
 
-      const routeItems = await extractRoute(bases, ocrTexts, lomItems);
+      console.log("3/5: Analyserer rørgeometri (Dette kan ta 30-60 sekunder)...");
+      setOcrProgress("AI analyserer rørtraséen...");
+      const routeItems = await extractRoute(bases, ocrTexts, lomItems, fetchWithTimeout);
+      
       if (!routeItems || !Array.isArray(routeItems)) {
         alert("Rute-analysen returnerte ikke gyldige data. Prøv igjen, evt. med en annen modell.");
         return;
       }
 
-      // EXPERT FIX: Kjør Geometrisk Validering (Sanering) før vi bygger modellen!
+      console.log("4/5: Bygger geometri og sjekker avvik...");
+      setOcrProgress("Bygger 3D-grunnlag...");
       const sanitizedRouteItems = sanitizeRouteGeometry(routeItems);
 
       let mergeResult;
       try {
-        // Bruk de saniterte dataene i stedet for rådataene
         mergeResult = mergeAndCalculate(lomItems, sanitizedRouteItems, referencePoint);
       } catch (err) {
         console.warn("mergeAndCalculate feilet, tvinger lineær geometri:", err);
         const fallbackComponents = calculateAbsoluteCoordinatesLinear(sanitizedRouteItems, referencePoint);
         mergeResult = { 
           components: fallbackComponents.map(c => ({ ...c, schedule: c.schedule || "40" })), 
-          lomIssues: [], extraIssues: [], topologyWarnings: ["Kunne ikke bygge graf-struktur, bruker lineær plassering (AI kan ha manglede ID-er)."], 
+          lomIssues: [], extraIssues: [], topologyWarnings: ["Kunne ikke bygge graf-struktur, bruker lineær plassering."], 
           ruleWarnings: [], continuityIssues: [], reconciliationStatus: 'unknown' 
         };
       }
-      // EXPERT FIX: PASS 4 - Targeted Re-scan for manglende komponenter
+
+      console.log("5/5: Sjekker om vi mangler komponenter (Pass 4)...");
       if (mergeResult.lomIssues && mergeResult.lomIssues.length > 0 && mergeResult.lomIssues.length <= 8) {
         try {
-          console.log("PASS 4: Kjører målrettet nytt søk for manglende komponenter...", mergeResult.lomIssues);
+          setOcrProgress("Sjekker manglende komponenter...");
           const rescanPrompt = getTargetedRescanPrompt(mergeResult.lomIssues);
           
-          const rescanRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          const rescanRes = await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': window.location.href, 'X-Title': 'MTO 3D' },
             body: JSON.stringify({
@@ -365,12 +386,19 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
       }
 
       const { components, lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, reconciliationStatus } = mergeResult;
-
       const diagnostics = { lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, reconciliationStatus };
+      
       if (typeof onDiagnostics === "function") onDiagnostics(diagnostics);
-
       onComponentsReady(components);
-    } catch (e) { console.error("AI‑feil:", e); alert('AI‑feil: ' + (e.message || 'Ukjent feil')); } finally { setLoading(false); setOcrProgress(""); }
+      console.log("Fullført!");
+
+    } catch (e) { 
+      console.error("AI‑feil:", e); 
+      alert('AI‑feil: ' + (e.message || 'Ukjent feil')); 
+    } finally { 
+      setLoading(false); 
+      setOcrProgress(""); 
+    }
   };
 
   return (
