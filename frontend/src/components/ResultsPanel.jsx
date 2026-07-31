@@ -4,12 +4,13 @@ import { useState, useEffect } from "react";
 function validateComponent(c) {
   const dn = c.size_dn_nps ? parseInt(String(c.size_dn_nps).replace(/DN\s*/i, '')) : null;
   const len = Math.sqrt((c.end_x - c.start_x) ** 2 + (c.end_y - c.start_y) ** 2 + (c.end_z - c.start_z) ** 2);
-  const hasMaterial = c.material_grade || c.spec_material;
   const hasSchedule = c.schedule;
 
   if (!dn || dn <= 0) return { status: 'yellow', msg: 'Mangler gyldig DN/NPS.' };
   
-  // EXPERT FIX (Takk til Claude): Utvid unntakene for punkt-komponenter (len < 0.01)
+  // FIX: Definer compName før den brukes
+  const compName = (c.component || '').toLowerCase();
+  
   const isPointComponent = 
     compName.includes('tee') || 
     compName.includes('flange') || 
@@ -31,8 +32,7 @@ function validateComponent(c) {
   // Hvis den har null lengde, men ikke er en godkjent punkt-komponent -> RØD
   if (len < 0.01 && !isPointComponent) return { status: 'red', msg: 'Ugyldig geometri (start/slutt er lik).' };
   
-  // Hvis den mangler materialspesifikasjon -> GUL
-  if (!hasMaterial) return { status: 'yellow', msg: 'Mangler materialspesifikasjon.' };
+  // Hvis den mangler schedule -> GUL
   if (!hasSchedule) return { status: 'yellow', msg: 'Mangler Schedule (antatt SCH40).' };
   
   // Hvis alt er bra (inkludert punkt-komponenter med riktig type) -> GRØNN
