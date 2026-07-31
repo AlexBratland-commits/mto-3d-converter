@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import Tesseract from "tesseract.js";
 import * as pdfjsLib from "pdfjs-dist";
 import { safeParseJSON } from "../services/parseUtils";
-import { calculateAbsoluteCoordinatesLinear, buildRouteFromGraph, validateTopologyRules, validateContinuityLinear, normalizeComponentName, normalizeRouteItem, sanitizeRouteGeometry } from "../services/geometryEngine";
+import { calculateAbsoluteCoordinatesLinear, buildRouteFromGraph, validateTopologyRules, validateContinuityLinear, normalizeComponentName, normalizeRouteItem, sanitizeRouteGeometry, validateDimensionText } from "../services/geometryEngine";
 import { getSystemPrompt, getUserPrompt, getLomPrompt, getTargetedRescanPrompt } from "../services/aiPrompts";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -91,7 +91,6 @@ const mergeAndCalculate = (lomItems, routeItems, originPoint) => {
     }
   });
 
-  // Kjør Auto-Correct
   if (extraIssues.length > 0 && lomIssues.length > 0) {
     extraIssues.forEach((extra) => {
       const targetComponent = correctionMap[extra.component];
@@ -208,23 +207,43 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
     const systemPrompt = getSystemPrompt();
     const userPrompt = getUserPrompt(orientation, customStandards, ocrTexts, lomItems);
 
+    // FIX: response_format kan feile på OpenRouter for visse modeller
+    const supportsJsonMode = !model.includes('gemini-2.5-flash-image');
+
+    const body = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: [
+          { type: "text", text: userPrompt },
+          ...bases.map(b => ({
+            type: "image_url",
+            image_url: { url: `data:${b.mime};base64,${b.base64}`, detail: "high" }
+          }))
+        ]}
+      ],
+      max_tokens: retryCount > 0 ? 12000 : 8192,
+      temperature: 0.05,
+    };
+
+    if (supportsJsonMode) {
+      body.response_format = { type: "json_object" };
+    }
+
     const res = await fetchFn('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': window.location.href, 'X-Title': 'MTO 3D' },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: [{ type: "text", text: userPrompt }, ...bases.map(b => ({ type: "image_url", image_url: { url: `data:${b.mime};base64,${b.base64}`, detail: "high" } }))] }
-        ],
-        max_tokens: retryCount > 0 ? 12000 : 8192,
-        temperature: 0.05,
-      })
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+        'HTTP-Referer': window.location.href,
+        'X-Title': 'MTO 3D'
+      },
+      body: JSON.stringify(body)
     });
+
     const data = await res.json();
     if (!res.ok) throw new Error(data.error?.message || 'Rute-feil');
 
-    // La inn igjen Retry-logikken for å unngå at JSON kuttes midt over
     if (data.choices[0].finish_reason === 'length' && retryCount < 1) {
       console.warn("ADVARSEL: AI-responsen ble trunkert – prøver på nytt med høyere max_tokens.");
       return extractRoute(bases, ocrTexts, lomItems, fetchFn, retryCount + 1);
@@ -240,6 +259,9 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
       items = [];
     }
 
+    // NY: Kjør dimension_text-validering ETTER parsing
+    items = validateDimensionText(items);
+
     return items.map(normalizeRouteItem);
   };
 
@@ -248,7 +270,6 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
     setLoading(true); setOcrProgress("");
     setGlobalOrigin({ x: 0, y: 0, z: 0 });
 
-    // Hjelpefunksjon for å legge til timeout på API-kall
     const fetchWithTimeout = async (url, options, timeoutMs = 90000) => {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -318,7 +339,9 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
 
       console.log("4/5: Bygger geometri og sjekker avvik...");
       setOcrProgress("Bygger 3D-grunnlag...");
-      const sanitizedRouteItems = sanitizeRouteGeometry(routeItems);
+      
+      // FIX: Send lomItems for kryssjekk av lengder
+      const sanitizedRouteItems = sanitizeRouteGeometry(routeItems, lomItems);
 
       let mergeResult;
       try {
@@ -361,22 +384,19 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
               
               const maxId = sanitizedRouteItems.reduce((max, c) => Math.max(max, parseInt(c.id) || 0), 0);
               
-              // QWEN FIX: Deduplisering - Sjekk om komponenten allerede finnes før vi legger den til
               const existingKeys = new Set(sanitizedRouteItems.map(c => `${c.component}-${c.size_dn_nps}`));
               const newItems = rescanParsed.components
                 .filter(c => !existingKeys.has(`${c.component}-${c.size_dn_nps}`))
                 .map((c, i) => ({
                   ...c,
                   id: String(maxId + i + 1),
-                  // La AI-en bestemme connects_from, hvis den mangler vil sanitizeRouteGeometry fikse det
                   connects_from: c.connects_from || "", 
                   schedule: c.schedule || "40"
                 }));
                 
               if (newItems.length > 0) {
-                // Kjør sanitize og merge på nytt med de nye komponentene
                 const combinedRoute = [...sanitizedRouteItems, ...newItems];
-                const sanitizedCombined = sanitizeRouteGeometry(combinedRoute);
+                const sanitizedCombined = sanitizeRouteGeometry(combinedRoute, lomItems);
                 mergeResult = mergeAndCalculate(lomItems, sanitizedCombined, referencePoint);
               }
             }

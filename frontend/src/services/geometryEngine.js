@@ -31,19 +31,45 @@ export function estimateComponentLength(type, dn) {
   return table[nearestDn] || 50;
 }
 
+// FIX 1: Utvidet normalisering med alle varianter fra Hydro/DVALIN-tegningene
 export function normalizeComponentName(name) {
-  const n = (name || '').toUpperCase();
-  if (n.includes('ELBOW') || n.includes('BEND')) return 'Bend';
-  if (n.includes('FLANGE')) return 'Flange';
-  if (n.includes('VALVE') || n.includes('BLOCK')) return 'Valve';
-  if (n.includes('PIPE')) return 'Pipe';
-  if (n.includes('WELDLET') || n.includes('OLET')) return 'Weldlet';
-  if (n.includes('REDUCER') || n.includes('SWAGE')) return 'Reducer';
+  const n = (name || '').toUpperCase().replace(/\s+/g, ' ');
+
+  if (n.includes('ELBOW') || n.includes('BEND') || n.includes('ELB ')) return 'Bend';
+  if (n.includes('SPECT') || n.includes('BLIND')) return 'Spectacle Blind';
+  if (n.includes('FLANGE') || n.includes('FLG')) return 'Flange';
+
+  // FIX: Alle ventilvarianter fra DVALIN-tegningene
+  if (
+    n.includes('VALVE') || n.includes('BLOCK') ||
+    n.includes('PSV') || n.includes('PRV') || n.includes('SRV') ||
+    n.includes('SAFETY RELIEF') || n.includes('RELIEF') ||
+    n.includes('ESDV') || n.includes('VDS') ||
+    n.includes('GVGD') || n.includes('GVAS') || n.includes('GVFD') ||
+    n.includes('BNFD') || n.includes('CNFD') || n.includes('MGFD') ||
+    n.includes('LSGD') || n.includes('BOFD') || n.includes('CPFD') ||
+    n.includes('BALL') || n.includes('GATE') || n.includes('GLOBE') ||
+    n.includes('CHECK') || n.includes('BUTTERFLY') || n.includes('NEEDLE')
+  ) return 'Valve';
+
+  if (n.includes('PIPE') || n.includes('PIP ') || n.includes('PIP\n')) return 'Pipe';
+  if (n.includes('WELDLET') || n.includes('OLET') || n.includes('WOL')) return 'Weldlet';
+  if (n.includes('REDUCER') || n.includes('SWAGE') || n.includes('RED CON') || n.includes('RED ECC')) return 'Reducer';
   if (n.includes('TEE')) return 'Tee';
   if (n.includes('NIPPLE')) return 'Nipple';
   if (n.includes('DRIP')) return 'Drip Ring';
-  if (n.includes('SPECT') || n.includes('BLIND')) return 'Spectacle Blind';
-  if (n.includes('GASKET') || n.includes('STUD') || n.includes('BOLT') || n.includes('NUT')) return 'Fastener';
+  if (n.includes('GASKET') || n.includes('GSK') || n.includes('STUD') || n.includes('STB') || n.includes('BOLT') || n.includes('NUT')) return 'Fastener';
+
+  // Støtter og strukturelle elementer
+  if (n.includes('SUPPORT') || n.includes('SHOE') || n.includes('HANGER') || n.includes('GUIDE') || n.includes('CLAMP') || n.includes('TRUNNION') || n.includes('PR0SH')) return 'Support';
+  if (n.includes('DECK') || n.includes('PENETRATION')) return 'DeckPenetration';
+  if (n.includes('REINFORC') || n.includes('REP PAD') || n.includes('PD0RP')) return 'ReinforcingPad';
+  if (n.includes('BRACING') || n.includes('BRACE')) return 'Bracing';
+  if (n.includes('WEAR PLATE')) return 'WearPlate';
+  if (n.includes('INSTRUMENT') || n.includes('TRANSMITTER') || n.includes('GAUGE') || n.includes('THERMOWELL') || n.includes('ELEMENT') || n.includes('ORIFICE') || n.includes('FO ') || n.includes('RO ')) return 'Instrument';
+  if (n.includes('PLUG') || n.includes('BLEED')) return 'Plug';
+  if (n.includes('CAP')) return 'Cap';
+
   return n.trim();
 }
 
@@ -104,15 +130,33 @@ export function placeShortOffset(comp, origin, direction, incomingZ) {
   return { start:{x:ox,y:oy,z:startZ}, end:{x:ox+vec[0]*dist,y:oy+vec[1]*dist,z:endZ}, direction: dir, outZ: endZ };
 }
 
+// FIX 2: Ingen 500mm fallback. Returner _missingLength hvis AI feilet.
 export function placePipe(comp, origin, direction, incomingZ) {
-  const { x:ox, y:oy, z:oz } = origin;
+  const { x: ox, y: oy, z: oz } = origin;
   const dir = comp.direction || direction;
-  const vec = getVector(dir) || [0,0,0];
-  const len = comp.length_mm || 500;
+  const vec = getVector(dir) || [0, 0, 0];
+
+  const len = Number(comp.length_mm);
+  if (!Number.isFinite(len) || len <= 0) {
+    console.warn(`placePipe: Mangler lengde for ${comp.component} ${comp.size_dn_nps} (id: ${comp.id})`);
+    return {
+      start: { x: ox, y: oy, z: incomingZ },
+      end: { x: ox, y: oy, z: incomingZ },
+      direction: normalizeDirKey(dir) || dir,
+      outZ: incomingZ,
+      _missingLength: true
+    };
+  }
+
   const isHorizontal = HORIZONTAL_DIRS.includes(normalizeDirKey(dir));
   const startZ = isHorizontal ? incomingZ : oz;
-  const endZ = isHorizontal ? incomingZ : oz + vec[2]*len;
-  return { start:{x:ox,y:oy,z:startZ}, end:{x:ox+vec[0]*len,y:oy+vec[1]*len,z:endZ}, direction:normalizeDirKey(dir)||dir, outZ: endZ };
+  const endZ = isHorizontal ? incomingZ : oz + vec[2] * len;
+  return {
+    start: { x: ox, y: oy, z: startZ },
+    end: { x: ox + vec[0] * len, y: oy + vec[1] * len, z: endZ },
+    direction: normalizeDirKey(dir) || dir,
+    outZ: endZ
+  };
 }
 
 export function placeBend(comp, origin, direction, incomingZ) {
@@ -261,71 +305,132 @@ export function validateTopologyRules(components) {
   return warnings;
 }
 
+// FIX 4: Inkluder rørlengder i sjekklisten til AI-en
 export function buildExpectedCountsChecklist(lomItems) {
   if (!lomItems || !lomItems.length) return "";
   const counts = {};
+  const pipeLengths = [];
+
   lomItems.forEach(i => {
     const type = normalizeComponentName(i.component);
-    if (type === 'Fastener' || type === 'Pipe') return;
+    if (type === 'Fastener') return;
+    if (type === 'Pipe') {
+      const len = Number(i.length_mm);
+      if (len && len > 0) {
+        pipeLengths.push({ size: i.size_dn_nps || i.size || '', length_mm: len });
+      }
+      return;
+    }
     const key = `${type} ${i.size_dn_nps || ''}`.trim();
     counts[key] = (counts[key] || 0) + (Number(i.quantity) || 1);
   });
-  const lines = Object.entries(counts).map(([k, v]) => `- ${k}: ${v} stk`).join("\n");
-  if (!lines) return "";
-  return `\nFØR du svarer: materiallisten sier at rørtraséen skal inneholde omtrent:\n${lines}\nVIKTIG: dette er en kontrolliste over synlige komponenter. Hvis du ser komponenter fra denne listen på tegningen, skal de være med i JSON selv om de er små, ligger på avgreninger eller ikke er på hovedrøret.\n`;
+
+  const lines = [];
+  if (pipeLengths.length > 0) {
+    lines.push("RØRLENGDER FRA MTO (BRUK DISSE – IKKE GJETT):");
+    pipeLengths.forEach(p => lines.push(`  Pipe ${p.size}: ${p.length_mm}mm`));
+    lines.push("  → ALDRI bruk 1000mm som default.");
+  }
+  const compLines = Object.entries(counts).map(([k, v]) => `  ${k}: ${v} stk`);
+  if (compLines.length > 0) {
+    lines.push("\nKOMPONENTER SOM SKAL FINNES:");
+    lines.push(...compLines);
+  }
+  return lines.length > 0 ? `\n${lines.join("\n")}\n` : "";
 }
 
-/**
- * GEOMETRISK VALIDERINGSMOTOR (Pre-processor)
- * Rydder opp i AI-ens rådata FØR 3D-koordinatene beregnes.
- * Tvinger frem ASME-standardlengder og sikrer sammenhengende graf.
- */
-export function sanitizeRouteGeometry(routeItems) {
+// FIX 3: Sanitizer som flagger mistenkelige runda tall og kryssjekker MTO
+export function sanitizeRouteGeometry(routeItems, lomItems = null) {
   if (!routeItems || routeItems.length === 0) return [];
 
+  const mtoPipeLengths = [];
+  if (lomItems && Array.isArray(lomItems)) {
+    lomItems.forEach(i => {
+      if (normalizeComponentName(i.component) === 'Pipe' && Number(i.length_mm) > 0) {
+        mtoPipeLengths.push({
+          size: String(i.size_dn_nps || i.size || '').toUpperCase().replace(/\s/g, ''),
+          length_mm: Number(i.length_mm),
+          used: false
+        });
+      }
+    });
+  }
+
+  const SUSPICIOUS = new Set([100, 150, 200, 250, 300, 400, 500, 750, 1000, 1500, 2000, 2500, 3000]);
   const sanitized = [];
-  let prevValidDir = "E"; // Standard retning hvis AI-en mangler en
+  let prevValidDir = "E";
 
   routeItems.forEach((comp, index) => {
     let cleanComp = { ...comp };
     const type = normalizeComponentName(cleanComp.component || '');
-    const dn = parseInt(String(cleanComp.size_dn_nps || '').replace(/DN/i, '')) || 100;
+    const dn = parseInt(String(cleanComp.size_dn_nps || '').replace(/[^0-9]/g, '')) || 100;
     const asmeLen = estimateComponentLength(type, dn);
 
-    // 1. Riktig retning
     if (cleanComp.direction) {
       prevValidDir = cleanComp.direction;
     } else {
-      cleanComp.direction = prevValidDir; // Arv forrige retning
+      cleanComp.direction = prevValidDir;
     }
 
-    // 2. Tvunget ASME-lengde for alt unntatt Pipe
-    if (type !== 'Pipe') {
-      cleanComp.length_mm = asmeLen;
-    } else {
-      // For Pipe: Hvis AI-en ga en urimelig lengde (f.eks. > 10m eller < 10mm), gi den en standardlengde
+    if (type === 'Pipe') {
       let aiLen = Number(cleanComp.length_mm) || 0;
+      const compSize = String(cleanComp.size_dn_nps || '').toUpperCase().replace(/\s/g, '');
+
       if (aiLen < 10 || aiLen > 10000) {
-        console.warn(`Geometri-sjekk: Urimeleg lengde (${aiLen}mm) på rad ${index}. Setter til 500mm.`);
-        cleanComp.length_mm = 500; 
+        cleanComp.length_mm = null;
+        cleanComp._needsLengthReview = true;
+        cleanComp.confidence = Math.min(cleanComp.confidence || 1, 0.1);
+      } else if (SUSPICIOUS.has(aiLen)) {
+        const mtoMatch = mtoPipeLengths.find(l => l.size === compSize && !l.used);
+        if (mtoMatch) {
+          mtoMatch.used = true; // FIX: Rettet bug (match.used -> mtoMatch.used)
+          console.log(`✅ MTO-match: Erstatter ${aiLen}mm → ${mtoMatch.length_mm}mm for ${cleanComp.size_dn_nps}`);
+          cleanComp.length_mm = mtoMatch.length_mm;
+          cleanComp._lengthSource = 'MTO';
+          cleanComp.confidence = Math.max(cleanComp.confidence || 0, 0.85);
+        } else {
+          cleanComp._suspiciousLength = true;
+          cleanComp.confidence = Math.min(cleanComp.confidence || 1, 0.3);
+        }
+      }
+    } else {
+      const aiLen = Number(cleanComp.length_mm);
+      if (aiLen && aiLen > 0 && !SUSPICIOUS.has(aiLen)) {
+        cleanComp._lengthSource = 'AI_vision';
+      } else {
+        cleanComp.length_mm = asmeLen;
+        cleanComp._lengthSource = 'ASME_estimate';
       }
     }
 
-    // 3. Sikre gyldig ID og graf-struktur
-    if (!cleanComp.id) {
-      cleanComp.id = String(index + 1);
-    }
-    
-    // Hvis det er den første komponenten, tving connects_from til START
+    if (!cleanComp.id) cleanComp.id = String(index + 1);
     if (index === 0) {
       cleanComp.connects_from = "START";
     } else if (!cleanComp.connects_from || cleanComp.connects_from === "START") {
-      // Hvis den mangler kobling, koble til forrige sanitized komponent
-      cleanComp.connects_from = sanitized[index - 1].id;
+      cleanComp.connects_from = sanitized[index - 1]?.id || "START";
     }
 
     sanitized.push(cleanComp);
   });
 
   return sanitized;
+}
+
+// NY FUNKSJON: Validering av dimension_text
+export function validateDimensionText(components) {
+  return components.map(comp => {
+    if (comp.dimension_text && comp.length_mm) {
+      const parsed = parseInt(comp.dimension_text);
+      if (!isNaN(parsed) && Math.abs(parsed - Number(comp.length_mm)) > 1) {
+        console.warn(`⚠️ MISMATCH: dimension_text="${comp.dimension_text}" (${parsed}) ≠ length_mm=${comp.length_mm} på ${comp.component} ${comp.size_dn_nps}`);
+        return {
+          ...comp,
+          length_mm: parsed, // Stol på det AI-en faktisk leste
+          _dimensionMismatch: true,
+          confidence: Math.min(comp.confidence || 1, 0.5)
+        };
+      }
+    }
+    return comp;
+  });
 }
