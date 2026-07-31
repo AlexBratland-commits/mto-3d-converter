@@ -224,6 +224,12 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
     const data = await res.json();
     if (!res.ok) throw new Error(data.error?.message || 'Rute-feil');
 
+    // La inn igjen Retry-logikken for å unngå at JSON kuttes midt over
+    if (data.choices[0].finish_reason === 'length' && retryCount < 1) {
+      console.warn("ADVARSEL: AI-responsen ble trunkert – prøver på nytt med høyere max_tokens.");
+      return extractRoute(bases, ocrTexts, lomItems, fetchFn, retryCount + 1);
+    }
+
     const parsed = safeParseJSON(data.choices?.[0]?.message?.content);
     let items;
     if (Array.isArray(parsed)) {

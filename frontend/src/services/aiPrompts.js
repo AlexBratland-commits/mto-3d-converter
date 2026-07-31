@@ -31,7 +31,11 @@ Pipe | Elbow | Tee | Reducer | Olet | Flange | Valve | PSV | BleedPlug | DripRin
 ❌ Aldri bland Prefab og Erection.
 ❌ Aldri tolk 30° diagonal som høydeendring.
 ❌ Aldri forveksl Deck Penetration med Pipe Support.
-❌ ALDRI generer mer enn 50 komponenter. Ikke finn på fiktive avgreninger på 100mm for å fylle opp. Hvis en lengde mangler, sett 1000mm.
+❌ Aldri hopp over små avgreninger (< 2").
+
+LENGDER (KRITISK):
+- Du MÅ lese av lengden (i mm) fra dimensjonslinjene på tegningen og legge det i "length_mm".
+- Finn IKKE på fiktive lengder. Hvis linjen er uleselig, sett "length_mm": null.
 
 Du er ikke en forklarings-AI. Returner kun JSON.`;
 };
@@ -50,7 +54,7 @@ export const getUserPrompt = (orientation, customStandards, ocrTexts, lomItems) 
   return `Analyser denne ISO-tegningen. Følg denne prosedyren:
 
 STEG 1: Les title block.
-STEG 2: Spor hovedrøret fra START til slutt.
+STEG 2: Spor hovedrøret fra START til slutt. Les alle dimensjonslinjer nøyaktig.
 STEG 3: Gå tilbake og finn ALLE synlige avgreninger (olets, tees).
 STEG 4: Finn ALLE supports og Deck Penetrations.
 STEG 5: Kryssjekk mot MTO nedenfor.
