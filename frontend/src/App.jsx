@@ -48,12 +48,9 @@ function App() {
   const navRef = useRef(null);
   const indicatorRef = useRef(null);
 
-  /* ── Load active project on mount ──────────────────────────────── */
-
-  useEffect(() => {
-    const proj = getActiveProject();
-    if (proj) loadProjectIntoState(proj);
-  }, []);
+  /* ── Start fresh on every page load ──────────────────────── */
+  // Vi laster ikke inn gammelt prosjekt automatisk lenger.
+  // Brukeren starter med blank ark (0) og kan åpne et gammelt prosjekt via ProjectManager ved behov.
 
   /* ── Storage info ──────────────────────────────────────────────── */
 
@@ -417,10 +414,8 @@ function App() {
       {/* ── NEW: ProjectManager renders here ──────────────────────── */}
       <ProjectManager onProjectChange={handleProjectChange} />
 
-      {/* ── Show tab content only when a project is active ────────── */}
-      {activeProject && (
-        <>
-          <nav className="segmented-tabs" ref={navRef} style={{ display: "flex", justifyContent: "center", marginBottom: "2.5rem", flexWrap: "wrap" }}>
+      {/* ── Vis fanene alltid, slik at brukeren kan starte en ny skanning umiddelbart ── */}
+      <nav className="segmented-tabs" ref={navRef} style={{ display: "flex", justifyContent: "center", marginBottom: "2.5rem", flexWrap: "wrap" }}>
             <div className="segmented-indicator" ref={indicatorRef} />
             <button className={`segmented-tab ${activeTab === "lom" ? "is-active" : ""}`} onClick={() => setActiveTab("lom")}>
               📋 MTO Tabell{lomData ? " ✓" : ""}
@@ -440,7 +435,7 @@ function App() {
             <section>
               <LOMTabellUploader
                 apiKey={apiKey}
-                model={activeProject.settings?.model || "google/gemini-2.5-flash-lite"}
+                model={activeProject?.settings?.model || "google/gemini-2.5-flash-lite"}
                 onLOMReady={(items) => setLomData(items)}
               />
               {lomData && (
@@ -474,9 +469,9 @@ function App() {
                 externalLomItems={lomData}
                 externalStandards={externalStandards}
                 projectSettings={{
-                  model: activeProject.settings?.model,
-                  orientation: activeProject.settings?.orientation,
-                  customStandards: activeProject.settings?.customStandards || '',
+                  model: activeProject?.settings?.model || localStorage.getItem("mto3d_model") || "google/gemini-2.5-flash-image",
+                  orientation: activeProject?.settings?.orientation || localStorage.getItem("mto3d_orientation") || "elevation",
+                  customStandards: activeProject?.settings?.customStandards || '',
                 }}
                 onSettingsChange={(key, value) => saveProjectSetting(key, value)}
               />
@@ -516,8 +511,6 @@ function App() {
               )}
             </section>
           )}
-        </>
-      )}
     </div>
   );
 }

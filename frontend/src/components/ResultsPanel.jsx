@@ -10,10 +10,11 @@ function validateComponent(c) {
   if (!dn || dn <= 0) return { status: 'yellow', msg: 'Mangler gyldig DN/NPS.' };
   
   // EXPERT FIX (Takk til Claude): Utvid unntakene for punkt-komponenter (len < 0.01)
-  const compName = (c.component || '').toLowerCase();
   const isPointComponent = 
     compName.includes('tee') || 
     compName.includes('flange') || 
+    compName.includes('elbow') || 
+    compName.includes('bend') ||  
     compName.includes('plug') || 
     compName.includes('penetration') || 
     compName.includes('element') || 
