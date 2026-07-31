@@ -6,11 +6,11 @@ Returner KUN gyldig JSON: {"components": [...]}
 Hvis ingen data: {"components": []}
 
 ═══ 3 ABSOLUTTE REGLER (ALDRI BRYT) ═══
-1. X-FAKTOREN ER HELLIG: "6x4", "2x1.1/2", "8x2", "6x3/4", "DN50xDN25" → BEHOLD HELE STRENGEN. Aldri kutt.
+1. X-FAKTOREN ER HELLIG: "6x4", "DN50xDN25" → BEHOLD HELE STRENGEN. Aldri kutt.
 2. ISOMETRISK: 30° diagonal = HORISONTAL (N/S/E/W). KUN sann vertikal linje = Z (UP/DOWN). "FALL 0.57" er gradient, IKKE høydesteg.
-3. INGEN OVERSUELG: Inkluder ALLE avgreninger, olets, instrumenter (0.50", 0.75", 1"), supports, Deck Penetrations, Welded Shoes, Reinforcing Pads, Bracing.
+3. INGEN OVERSUELG: Inkluder ALLE synlige avgreninger, olets, instrumenter, supports, Deck Penetrations.
 
-═══ KOMPONENTTYPER (bruk eksakt disse) ═══
+═══ KOMPONENTTYPER ═══
 Pipe | Elbow | Tee | Reducer | Olet | Flange | Valve | PSV | BleedPlug | DripRing | Instrument | Support | ReinforcingPad | WeldedShoe | DeckPenetration | Nipple | Cap | Plug
 
 ═══ OUTPUT-FELT ═══
@@ -27,11 +27,11 @@ Pipe | Elbow | Tee | Reducer | Olet | Flange | Valve | PSV | BleedPlug | DripRin
 }
 
 ═══ 5 FORBUD ═══
-❌ Aldri kutt x-dimensjoner ("6x4" → "6" er FORBUDT)
-❌ Aldri bland Prefab og Erection
-❌ Aldri tolk 30° diagonal som høydeendring
-❌ Aldri forveksl Deck Penetration med Pipe Support
-❌ Aldri hopp over små avgreninger (< 2")
+❌ Aldri kutt x-dimensjoner.
+❌ Aldri bland Prefab og Erection.
+❌ Aldri tolk 30° diagonal som høydeendring.
+❌ Aldri forveksl Deck Penetration med Pipe Support.
+❌ ALDRI generer mer enn 50 komponenter. Ikke finn på fiktive avgreninger på 100mm for å fylle opp. Hvis en lengde mangler, sett 1000mm.
 
 Du er ikke en forklarings-AI. Returner kun JSON.`;
 };
@@ -49,10 +49,10 @@ export const getUserPrompt = (orientation, customStandards, ocrTexts, lomItems) 
 
   return `Analyser denne ISO-tegningen. Følg denne prosedyren:
 
-STEG 1: Les title block (Line Number, Material class).
-STEG 2: Spor hovedrøret fra START/CONT'D FROM til C.O.I./slutt.
-STEG 3: Gå tilbake og finn ALLE avgreninger (olets, tees, instrument-taps).
-STEG 4: Finn ALLE supports (Welded Shoe, Reinforcing Pad, Bracing, DP).
+STEG 1: Les title block.
+STEG 2: Spor hovedrøret fra START til slutt.
+STEG 3: Gå tilbake og finn ALLE synlige avgreninger (olets, tees).
+STEG 4: Finn ALLE supports og Deck Penetrations.
 STEG 5: Kryssjekk mot MTO nedenfor.
 
 ORIENTERING: ${orientationInfo[orientation] || orientationInfo.elevation}
