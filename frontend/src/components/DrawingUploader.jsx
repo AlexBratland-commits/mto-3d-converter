@@ -42,10 +42,12 @@ export async function convertPdfToImageFiles(pdfFile, { maxWidthPx = 2200 } = {}
 
 export function classifyDrawing(ocrText) {
   const t = (ocrText || "").toUpperCase();
+  // Sjekk om det er en P&ID eller Heat Trace (som vi IKKE skal bygge 3D av)
   if (/HEAT\s*TRAC(E|ING)\s*ISOMETRIC/.test(t)) return "HEAT_TRACE_ISO";
   if (/PROCESS\s*P&?I\s*DIAGRAM|PIPING\s*&\s*INSTRUMENT/.test(t)) return "PID";
-  if (/PIPING\s*ISOMETRIC|LIST\s*OF\s*MATERIALS/.test(t)) return "PIPING_ISO";
-  return "UNKNOWN";
+  
+  // Hvis den sier PIPING ISO, eller vi er usikre (UNKNOWN), lar vi den gå gjennom til 3D
+  return "PIPING_ISO"; 
 }
 
 const correctionMap = {
@@ -314,8 +316,12 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
       }
 
       const drawingType = classifyDrawing(ocrTexts.map(ot => ot.text).join(" "));
-      if (drawingType !== "PIPING_ISO") {
-        alert(`Dette er en ${drawingType} (eller ukjent). Geometri-motoren støtter kun PIPING_ISO. Analysen avbrytes.`);
+      if (drawingType === "PID") {
+        alert("Dette er en P&ID (Prosess- og instrumentdiagram). Geometri-motoren støtter kun Piping Isometries (ISO). Analysen avbrytes.");
+        setLoading(false);
+        return;
+      } else if (drawingType === "HEAT_TRACE_ISO") {
+        alert("Dette er en Heat Trace Isometri (varmekabel). Geometri-motoren støtter kun Piping Isometries (ISO). Analysen avbrytes.");
         setLoading(false);
         return;
       }
