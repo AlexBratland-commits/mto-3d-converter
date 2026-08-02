@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { scoreExtraction } from "../services/scoreEngine";
 
 // Oppdatert ASME-valideringsfunksjon
 function validateComponent(c) {
@@ -80,6 +81,7 @@ export default function ResultsPanel({
   aiMessage = null,
 }) {
   const [stats, setStats] = useState({ green: 0, yellow: 0, orange: 0, red: 0 });
+  const scores = scoreExtraction(components, lomItems || [], continuityIssues || []);
 
   useEffect(() => {
     const newStats = { green: 0, yellow: 0, orange: 0, red: 0 };
@@ -100,23 +102,23 @@ export default function ResultsPanel({
 
       {/* Valideringsboks */}
       <div className="summary-box" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-        <div className="summary-tile ok" style={{ borderColor: "rgba(16,185,129,0.3)", boxShadow: "0 0 30px -12px rgba(16,185,129,0.4)" }}>
-          <div className="num" style={{ color: "#6ee7b7" }}>{stats.green}</div>
-          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>🟢 Trygg standard</div>
-        </div>
-        <div className="summary-tile warn" style={{ borderColor: "rgba(250,204,21,0.3)", boxShadow: "0 0 30px -12px rgba(250,204,21,0.4)" }}>
-          <div className="num" style={{ color: "#fcd34d" }}>{stats.yellow}</div>
-          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>🟡 Usikker</div>
-        </div>
-        <div className="summary-tile orange" style={{ borderColor: "rgba(251,146,60,0.3)", boxShadow: "0 0 30px -12px rgba(251,146,60,0.4)" }}>
-          <div className="num" style={{ color: "#fb923c" }}>{stats.orange}</div>
-          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>🟠 Nærliggende</div>
-        </div>
-        <div className="summary-tile bad" style={{ borderColor: "rgba(239,68,68,0.3)", boxShadow: "0 0 30px -12px rgba(239,68,68,0.4)" }}>
-          <div className="num" style={{ color: "#fca5a5" }}>{stats.red}</div>
-          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>🔴 Feil/Ugyldig</div>
-        </div>
-      </div>
+  <div className="summary-tile ok" style={{ borderColor: "rgba(16,185,129,0.3)" }}>
+    <div className="num" style={{ color: "#6ee7b7" }}>{scores.componentScore}%</div>
+    <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Komponenter vs MTO</div>
+  </div>
+  <div className="summary-tile warn" style={{ borderColor: "rgba(250,204,21,0.3)" }}>
+    <div className="num" style={{ color: "#fcd34d" }}>{scores.lengthScore}%</div>
+    <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Lengder vs MTO</div>
+  </div>
+  <div className="summary-tile orange" style={{ borderColor: "rgba(251,146,60,0.3)" }}>
+    <div className="num" style={{ color: "#fb923c" }}>{scores.topologyScore}%</div>
+    <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Topologi (Ingen brudd)</div>
+  </div>
+  <div className="summary-tile bad" style={{ borderColor: "rgba(59,130,246,0.3)" }}>
+    <div className="num" style={{ color: "#93c5fd" }}>{scores.directionScore}%</div>
+    <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Retninger (Logisk)</div>
+  </div>
+</div>
 
       {/* Toolbar */}
       <div className="viewer-toolbar">

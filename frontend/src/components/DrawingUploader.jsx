@@ -40,6 +40,14 @@ export async function convertPdfToImageFiles(pdfFile, { maxWidthPx = 2200 } = {}
   return imageFiles;
 }
 
+export function classifyDrawing(ocrText) {
+  const t = (ocrText || "").toUpperCase();
+  if (/HEAT\s*TRAC(E|ING)\s*ISOMETRIC/.test(t)) return "HEAT_TRACE_ISO";
+  if (/PROCESS\s*P&?I\s*DIAGRAM|PIPING\s*&\s*INSTRUMENT/.test(t)) return "PID";
+  if (/PIPING\s*ISOMETRIC|LIST\s*OF\s*MATERIALS/.test(t)) return "PIPING_ISO";
+  return "UNKNOWN";
+}
+
 const correctionMap = {
   'SPECTACLE BLIND': 'FLANGE',
   'BLIND FLANGE': 'FLANGE',
@@ -303,6 +311,13 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
           const text = await runOCR(file); 
           ocrTexts.push({ fileName: file.name, text }); 
         } 
+      }
+
+      const drawingType = classifyDrawing(ocrTexts.map(ot => ot.text).join(" "));
+      if (drawingType !== "PIPING_ISO") {
+        alert(`Dette er en ${drawingType} (eller ukjent). Geometri-motoren støtter kun PIPING_ISO. Analysen avbrytes.`);
+        setLoading(false);
+        return;
       }
 
       const bases = await Promise.all(processedFiles.map(f => new Promise((resolve) => { 
