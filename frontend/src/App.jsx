@@ -480,7 +480,12 @@ function App() {
                   <DiagnosticsPanel diagnostics={diagnostics} />
                   <EditableTable data={aiComponents} onDataChange={(newData) => updateComponents(newData, setAiComponents)} />
                   <Viewer3D components={aiComponents} asmeOn={asmeOn} onToggleAsme={() => setAsmeOn(p => !p)} />
-                  <ResultsPanel {...resultsProps(aiComponents)} aiMessage={`✅ AI fant ${aiComponents.length} komponenter fra tegningen!`} />
+                  <ResultsPanel 
+  {...resultsProps(aiComponents)} 
+  aiMessage={`✅ AI fant ${aiComponents.length} komponenter fra tegningen!`} 
+  lomItems={lomData}
+  continuityIssues={diagnostics?.continuityIssues || []}
+/>
                 </>
               )}
             </section>

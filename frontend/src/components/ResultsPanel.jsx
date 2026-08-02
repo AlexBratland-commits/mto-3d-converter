@@ -67,6 +67,8 @@ function Legend() {
 
 export default function ResultsPanel({
   components,
+  lomItems = [],
+  continuityIssues = [],
   asmeOn,
   onToggleAsme,
   showDimensions,
@@ -102,23 +104,23 @@ export default function ResultsPanel({
 
       {/* Valideringsboks */}
       <div className="summary-box" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-  <div className="summary-tile ok" style={{ borderColor: "rgba(16,185,129,0.3)" }}>
-    <div className="num" style={{ color: "#6ee7b7" }}>{scores.componentScore}%</div>
-    <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Komponenter vs MTO</div>
-  </div>
-  <div className="summary-tile warn" style={{ borderColor: "rgba(250,204,21,0.3)" }}>
-    <div className="num" style={{ color: "#fcd34d" }}>{scores.lengthScore}%</div>
-    <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Lengder vs MTO</div>
-  </div>
-  <div className="summary-tile orange" style={{ borderColor: "rgba(251,146,60,0.3)" }}>
-    <div className="num" style={{ color: "#fb923c" }}>{scores.topologyScore}%</div>
-    <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Topologi (Ingen brudd)</div>
-  </div>
-  <div className="summary-tile bad" style={{ borderColor: "rgba(59,130,246,0.3)" }}>
-    <div className="num" style={{ color: "#93c5fd" }}>{scores.directionScore}%</div>
-    <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Retninger (Logisk)</div>
-  </div>
-</div>
+        <div className="summary-tile ok" style={{ borderColor: "rgba(16,185,129,0.3)" }}>
+          <div className="num" style={{ color: "#6ee7b7" }}>{scores.componentScore}%</div>
+          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Komponenter vs MTO</div>
+        </div>
+        <div className="summary-tile warn" style={{ borderColor: "rgba(250,204,21,0.3)" }}>
+          <div className="num" style={{ color: "#fcd34d" }}>{scores.lengthScore}%</div>
+          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Lengder vs MTO</div>
+        </div>
+        <div className="summary-tile orange" style={{ borderColor: "rgba(251,146,60,0.3)" }}>
+          <div className="num" style={{ color: "#fb923c" }}>{scores.topologyScore}%</div>
+          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Topologi (Ingen brudd)</div>
+        </div>
+        <div className="summary-tile bad" style={{ borderColor: "rgba(59,130,246,0.3)" }}>
+          <div className="num" style={{ color: "#93c5fd" }}>{scores.directionScore}%</div>
+          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Retninger (Logisk)</div>
+        </div>
+      </div>
 
       {/* Toolbar */}
       <div className="viewer-toolbar">
