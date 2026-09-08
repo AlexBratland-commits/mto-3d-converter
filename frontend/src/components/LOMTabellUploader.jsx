@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { safeParseJSON, sanitizeMTOData } from "../services/parseUtils";
+import { safeParseJSON, sanitizeMTOData, validateMTOPlausibility } from "../services/parseUtils";
 
 export default function LOMTabellUploader({ apiKey, model, onLOMReady }) {
   const [file, setFile] = useState(null);
@@ -92,10 +92,15 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
 
       const totalItems = items.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
 
+      // [FASE 2a-FIKS] B2: varsle om fysisk usannsynlige lengder – muterer ikke items.
+      const plausibilityWarnings = validateMTOPlausibility(items);
+      const flaggedRows = new Set(plausibilityWarnings.map(w => w.item_no)).size;
+
       setResult({
         items,
         totalItems,
         count: items.length,
+        flaggedRows,
       });
 
       if (typeof onLOMReady === "function") {
@@ -146,6 +151,11 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
           <p style={{ color: "#6ee7b7", fontWeight: 600, margin: 0 }}>
             ✅ Fant {result.count} unike komponenttyper ({result.totalItems} totale enheter)
           </p>
+          {result.flaggedRows > 0 && (
+            <p style={{ color: "#fbbf24", fontWeight: 600, margin: 0, marginTop: "0.4rem" }}>
+              ⚠️ {result.flaggedRows} rørrader har tvilsomme lengder (sjekk MTO-bildet på nytt)
+            </p>
+          )}
           <p style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.4rem" }}>
             Denne listen brukes automatisk som Steg 1 i AI-fanen — du trenger ikke laste den opp der på nytt.
           </p>

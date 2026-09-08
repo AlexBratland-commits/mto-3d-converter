@@ -1,4 +1,5 @@
 import { normalizeComponentName, getVector } from "./geometryEngine";
+import { canonicalSizeKey } from "./parseUtils";
 
 // [FASE 1-FIKS] P1: MTO-admin-rader (fasteners, isolasjonsstrips) modelleres bevisst
 // ikke i 3D (se buildExpectedCountsChecklist) og skal derfor ikke telle i komponent-nevneren.
@@ -14,19 +15,20 @@ function isMtoAdminItem(item) {
 // (f.eks. ingen MTO-lengder, ingen komponenter) — null betyr «kan ikke verifiseres»,
 // og skal IKKE tolkes som 0 % eller 100 %.
 export function scoreExtraction(components, lomItems, continuityIssues, topologyWarnings = []) {
-  const norm = (s) => String(s || "").toUpperCase().replace(/\s/g, "");
   const isPipe = (c) => normalizeComponentName(c.component) === "Pipe";
 
   // 1) Komponenter mot MTO [FASE 1-FIKS] P1: ekskluder admin-rader fra lom-siden,
   // og fjern den kunstige `|| 1`-fallbacken på nevneren (expTot === 0 → ikke verifiserbart).
+  // [FASE 2a-FIKS] B1: canonicalSizeKey i stedet for rå størrelsesstreng, slik at
+  // MTO "WELDLET DN250" og AI "DN250XDN80" matcher som samme fysiske del.
   const lom = {}, got = {};
   const adminExcluded = lomItems.filter(isMtoAdminItem).length;
   lomItems.filter((i) => !isMtoAdminItem(i)).forEach((i) => {
-    const k = `${normalizeComponentName(i.component)}_${norm(i.size_dn_nps || i.size)}`;
+    const k = `${normalizeComponentName(i.component)}_${canonicalSizeKey(i.size_dn_nps || i.size)}`;
     lom[k] = (lom[k] || 0) + (Number(i.quantity) || 1);
   });
   components.forEach((c) => {
-    const k = `${normalizeComponentName(c.component)}_${norm(c.size_dn_nps)}`;
+    const k = `${normalizeComponentName(c.component)}_${canonicalSizeKey(c.size_dn_nps)}`;
     got[k] = (got[k] || 0) + 1;
   });
 
@@ -38,12 +40,14 @@ export function scoreExtraction(components, lomItems, continuityIssues, topology
   // enkeltsegmenter — sammenlign derfor summert mm per størrelse, ikke multiset-matching.
   // Valgt formel: vektet sum-avvik per størrelse (alternativ hadde vært binær
   // within-tolerance per størrelse; vektet sum-avvik gir en jevnere, mindre hakkete score).
+  // [FASE 2a-FIKS] B1: canonicalSizeKey også her, slik at lengdesummer per størrelse
+  // ikke splittes opp av multi-size-formatforskjeller mellom MTO og AI.
   const lomLenSum = {}, gotLenSum = {};
   lomItems.forEach((i) => {
     if (normalizeComponentName(i.component) !== "Pipe") return;
     const len = Number(i.length_mm);
     if (!(len > 0)) return;
-    const k = norm(i.size_dn_nps || i.size);
+    const k = canonicalSizeKey(i.size_dn_nps || i.size);
     lomLenSum[k] = (lomLenSum[k] || 0) + len;
   });
   components.forEach((c) => {
@@ -52,7 +56,7 @@ export function scoreExtraction(components, lomItems, continuityIssues, topology
     if (normalizeComponentName(c.component) !== "Pipe") return;
     const len = Number(c.length_mm);
     if (!(len > 0)) return;
-    const k = norm(c.size_dn_nps);
+    const k = canonicalSizeKey(c.size_dn_nps);
     gotLenSum[k] = (gotLenSum[k] || 0) + len;
   });
 

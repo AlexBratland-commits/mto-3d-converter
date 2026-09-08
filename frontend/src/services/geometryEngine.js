@@ -1,3 +1,5 @@
+import { canonicalSizeKey } from "./parseUtils";
+
 export const ASME_OD = { 50:60.3, 80:88.9, 100:114.3, 150:168.3, 200:219.1, 250:273.0, 300:323.9, 350:355.6, 400:406.4, 450:457.2, 500:508.0, 600:609.6 };
 export const ASME_BEND_RADIUS_LR = { 50:76, 80:114, 100:152, 150:229, 200:305, 250:381, 300:457, 350:533, 400:610, 450:686, 500:762, 600:914 };
 export const ASME_WALL_SCH40 = { 50:3.9, 80:5.5, 100:6.0, 150:7.1, 200:8.2, 250:9.3, 300:10.3, 350:11.1, 400:12.7, 450:14.3, 500:15.1, 600:17.5 };
@@ -346,12 +348,14 @@ export function buildExpectedCountsChecklist(lomItems) {
 export function sanitizeRouteGeometry(routeItems, lomItems = null) {
   if (!routeItems || routeItems.length === 0) return [];
 
+  // [FASE 2a-FIKS] B1: canonicalSizeKey på MTO-siden, slik at _mtoSuggestion_mm også
+  // fungerer på tvers av multi-size-formater (MTO "DN250" vs AI "DN250XDN80").
   const mtoPipeLengths = [];
   if (lomItems && Array.isArray(lomItems)) {
     lomItems.forEach(i => {
       if (normalizeComponentName(i.component) === 'Pipe' && Number(i.length_mm) > 0) {
         mtoPipeLengths.push({
-          size: String(i.size_dn_nps || i.size || '').toUpperCase().replace(/\s/g, ''),
+          size: canonicalSizeKey(i.size_dn_nps || i.size),
           length_mm: Number(i.length_mm),
           used: false
         });
@@ -377,7 +381,8 @@ export function sanitizeRouteGeometry(routeItems, lomItems = null) {
 
     if (type === 'Pipe') {
       let aiLen = Number(cleanComp.length_mm) || 0;
-      const compSize = String(cleanComp.size_dn_nps || '').toUpperCase().replace(/\s/g, '');
+      // [FASE 2a-FIKS] B1: canonicalSizeKey også på AI-siden ved MTO-oppslag.
+      const compSize = canonicalSizeKey(cleanComp.size_dn_nps);
 
       if (aiLen < 10 || aiLen > 10000) {
         cleanComp.length_mm = null;

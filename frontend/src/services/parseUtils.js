@@ -185,3 +185,63 @@ export function getPipeDimensions(sizeStr) {
 
   return null;
 }
+
+/* ================================================================
+   [FASE 2a-FIKS] B1: Canonical størrelsesnøkkel for matching på tvers
+   av multi-size-formater (MTO "WELDLET DN250" vs AI "DN250XDN80" er
+   samme fysiske del, men ulik rå streng).
+   ================================================================ */
+
+// [FASE 2a-FIKS] B1: normaliserer en størrelsesstreng til en sammenligningsnøkkel.
+// Bruker KUN første DN/tallgruppe – admin-koder (uten DN/ND/tommer-tegn og som
+// ikke starter på et siffer) beholdes uendret siden de ikke er rørstørrelser.
+// OBS: tommers-størrelser (f.eks. '1.1/2"') mappes IKKE til DN her – ingen
+// observert tegning bruker rent tommers-format i MTO-størrelser ennå. Utvid
+// med en tommer→DN-tabell (se PIPE_STANDARDS.nps) den dagen data krever det.
+export function canonicalSizeKey(sizeStr) {
+  const norm = String(sizeStr || '').toUpperCase().replace(/\s/g, '');
+  if (!norm) return '';
+
+  const hasSizeMarker = /DN|ND|"/.test(norm);
+  const startsWithDigit = /^\d/.test(norm);
+  if (!hasSizeMarker && !startsWithDigit) return norm; // admin-koder, f.eks. "M33X1.0MM", "TC"
+
+  const dnMatch = norm.match(/DN(\d+)/);
+  if (dnMatch) return `DN${dnMatch[1]}`;
+
+  const leadingNumberMatch = norm.match(/^(\d+(?:[./]\d+)*)/);
+  if (leadingNumberMatch) return leadingNumberMatch[1];
+
+  return norm;
+}
+
+// [FASE 2a-FIKS] B2: MTO-lesing kan produsere fysisk umulige lengder (desimaltall
+// på mm, eller urealistisk lange enkeltrader). Denne funksjonen MUTERER INGEN DATA –
+// den returnerer kun advarsler. Om flaggede rader skal ekskluderes fra scoring er
+// en senere policy-beslutning, ikke noe denne funksjonen avgjør.
+// Ingen ny avhengighet: bruker rå component-streng, ikke normalizeComponentName
+// (parseUtils skal ikke avhenge av geometryEngine).
+export function validateMTOPlausibility(items) {
+  if (!Array.isArray(items)) return [];
+  const warnings = [];
+
+  items.forEach((item) => {
+    const rawComponent = String(item?.component || '').toUpperCase();
+    if (!rawComponent.includes('PIPE')) return;
+
+    const verdi = Number(item.length_mm);
+    if (item.length_mm === null || item.length_mm === undefined || item.length_mm === '' || Number.isNaN(verdi)) return;
+
+    if (verdi > 25000) {
+      warnings.push({ item_no: item.item_no, felt: 'length_mm', verdi, årsak: '> 25 m på én rørrad – usannsynlig; mulig feillesing' });
+    }
+    if (!Number.isInteger(verdi)) {
+      warnings.push({ item_no: item.item_no, felt: 'length_mm', verdi, årsak: 'desimal på mm-lengde – mistenkelig' });
+    }
+    if (verdi > 0 && verdi < 50) {
+      warnings.push({ item_no: item.item_no, felt: 'length_mm', verdi, årsak: '< 50 mm – mulig antall lest som lengde' });
+    }
+  });
+
+  return warnings;
+}

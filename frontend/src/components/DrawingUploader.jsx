@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import Tesseract from "tesseract.js";
 import * as pdfjsLib from "pdfjs-dist";
-import { safeParseJSON } from "../services/parseUtils";
+import { safeParseJSON, canonicalSizeKey, validateMTOPlausibility } from "../services/parseUtils";
 import { calculateAbsoluteCoordinatesLinear, buildRouteFromGraph, validateTopologyRules, validateContinuityLinear, normalizeComponentName, normalizeRouteItem, sanitizeRouteGeometry, validateDimensionText } from "../services/geometryEngine";
 import { getSystemPrompt, getUserPrompt, getLomPrompt, getTargetedRescanPrompt } from "../services/aiPrompts";
 
@@ -59,11 +59,12 @@ const correctionMap = {
   'THREDOLET': 'NIPPLE'
 };
 
+// [FASE 2a-FIKS] B1: canonicalSizeKey i stedet for rå størrelsesstreng, slik at
+// MTO "WELDLET DN250" og AI "DN250XDN80" matcher som samme fysiske del i stedet
+// for å vises som samtidig "mangler" og "ekstra" i avviksrapporten.
 const mergeAndCalculate = (lomItems, routeItems, originPoint) => {
-  const cleanSize = (s) => String(s || 'ANY').toUpperCase().replace(/\s+/g, '');
-
   const lomNormalized = lomItems
-    .map(i => ({ ...i, normalizedType: normalizeComponentName(i.component), normalizedSize: cleanSize(i.size_dn_nps || i.size) }))
+    .map(i => ({ ...i, normalizedType: normalizeComponentName(i.component), normalizedSize: canonicalSizeKey(i.size_dn_nps || i.size) }))
     .filter(i => i.normalizedType !== 'Fastener');
 
   const lomMap = {};
@@ -73,7 +74,7 @@ const mergeAndCalculate = (lomItems, routeItems, originPoint) => {
     lomMap[k].expected += Number(i.quantity) || 1; 
   });
 
-  const routeNormalized = routeItems.map(i => ({ ...i, normalizedType: normalizeComponentName(i.component || ''), normalizedSize: cleanSize(i.size_dn_nps || i.size) }));
+  const routeNormalized = routeItems.map(i => ({ ...i, normalizedType: normalizeComponentName(i.component || ''), normalizedSize: canonicalSizeKey(i.size_dn_nps || i.size) }));
 
   let lomIssues = [];
   let extraIssues = [];
@@ -108,9 +109,9 @@ const mergeAndCalculate = (lomItems, routeItems, originPoint) => {
         const missingIndex = lomIssues.findIndex(m => m.component === targetComponent && m.size === extra.size && m.missing > 0);
         if (missingIndex !== -1) {
           const missing = lomIssues[missingIndex];
-          const compToFix = routeNormalized.find(c => 
-            normalizeComponentName(c.component) === extra.component && 
-            cleanSize(c.size_dn_nps || c.size) === extra.size
+          const compToFix = routeNormalized.find(c =>
+            normalizeComponentName(c.component) === extra.component &&
+            canonicalSizeKey(c.size_dn_nps || c.size) === extra.size
           );
 
           if (compToFix) {
@@ -209,6 +210,14 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
     } else if (Array.isArray(parsed)) {
       items = parsed;
     }
+
+    // [FASE 2a-FIKS] B2: varsle om fysisk usannsynlige MTO-lengder (muterer ikke items).
+    // Kun denne (interne) LOM-stien valideres her – ekstern MTO fra LOMTabellUploader
+    // valideres allerede der, og skal ikke dobbeltkjøres.
+    const plausibilityWarnings = validateMTOPlausibility(items);
+    plausibilityWarnings.forEach((w) => {
+      console.warn(`⚠️ MTO-plausibilitet: rad ${w.item_no ?? '?'} – ${w.felt}=${w.verdi} – ${w.årsak}`);
+    });
 
     return { lomItems: items, referencePoint: refPoint };
   };
