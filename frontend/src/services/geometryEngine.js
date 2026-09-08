@@ -327,9 +327,12 @@ export function buildExpectedCountsChecklist(lomItems) {
 
   const lines = [];
   if (pipeLengths.length > 0) {
-    lines.push("RØRLENGDER FRA MTO (BRUK DISSE – IKKE GJETT):");
+    // [FASE 1-FIKS] P7: MTO-lengder er TOTALER per rad/rørløp, ikke segmentlengder.
+    // Tidligere tekst ("BRUK DISSE") kunne tolkes av AI-en som segmentlengder.
+    lines.push("TOTAL RØRLENGDE I MTO (kun referanse – IKKE segmentlengder):");
     pipeLengths.forEach(p => lines.push(`  Pipe ${p.size}: ${p.length_mm}mm`));
-    lines.push("  → ALDRI bruk 1000mm som default.");
+    lines.push("  → Disse totalene gjelder hele raden/rørløpet, ikke enkeltsegmenter.");
+    lines.push("  → Lengden på HVERT segment skal ALLTID leses fra dimensjonslinjene på tegningen.");
   }
   const compLines = Object.entries(counts).map(([k, v]) => `  ${k}: ${v} stk`);
   if (compLines.length > 0) {
@@ -383,11 +386,16 @@ export function sanitizeRouteGeometry(routeItems, lomItems = null) {
       } else if (SUSPICIOUS.has(aiLen)) {
         const mtoMatch = mtoPipeLengths.find(l => l.size === compSize && !l.used);
         if (mtoMatch) {
-          mtoMatch.used = true; // FIX: Rettet bug (match.used -> mtoMatch.used)
-          console.log(`✅ MTO-match: Erstatter ${aiLen}mm → ${mtoMatch.length_mm}mm for ${cleanComp.size_dn_nps}`);
-          cleanComp.length_mm = mtoMatch.length_mm;
-          cleanComp._lengthSource = 'MTO';
-          cleanComp.confidence = Math.max(cleanComp.confidence || 0, 0.85);
+          // [FASE 1-FIKS] P6: MTO-lengder er TOTALER per rad, ikke enkeltsegmenter.
+          // Overskriving her ville mutert AI-observasjonen, brukt en radtotal som
+          // segmentlengde, og gjort lengthScore sirkulær (MTO sammenlignet med MTO).
+          // Flagg i stedet – ALDRI overskriv.
+          mtoMatch.used = true;
+          console.warn(`⚠️ Mistenkelig lengde ${aiLen}mm for ${cleanComp.size_dn_nps} – MTO-total for denne størrelsen er ${mtoMatch.length_mm}mm. Flagget for manuell gjennomgang.`);
+          cleanComp._suspiciousLength = true;
+          cleanComp._mtoSuggestion_mm = mtoMatch.length_mm;
+          cleanComp._lengthSource = 'AI_vision';
+          cleanComp.confidence = Math.min(cleanComp.confidence || 1, 0.3);
         } else {
           cleanComp._suspiciousLength = true;
           cleanComp.confidence = Math.min(cleanComp.confidence || 1, 0.3);

@@ -30,6 +30,7 @@ export default function LOMTabellUploader({ apiKey, model, onLOMReady }) {
       });
       const base64 = await base64Promise;
 
+// [FASE 1-FIKS] P5: lagt til length_mm-felt (kun pipe-rader) i MTO-skjemaet.
 const prompt = `Du er en ekspert på å lese MTO (Material Take-Off) og "List of Materials"-tabeller fra isometriske tegninger.
 Les alt innhold fra tabellen i dette bildet.
 
@@ -40,6 +41,7 @@ Returner KUN et rent JSON-array (uten markdown code blocks eller forklarende tek
 - size_dn_nps: dimensjon (f.eks. "DN80", "DN20", "DN250")
 - schedule: godstykkelse/schedule (f.eks. "40S", "80S", "SCH 40")
 - material: materialspesifikasjon (f.eks. "A815-S31803", "A182/F51")
+- length_mm: rørlengde i mm (KUN for PIPE-rader). Les fra beskrivelses-/lengdekolonnen, f.eks. «1628MM» → 1628, «3.0M» → 3000. Hvis tallet er per stykk (ikke total for raden), multipliser med quantity. Usikker på total vs. per stykk? Bruk tallet og sett i tillegg "length_ambiguous": true. Ingen lesbar lengde → length_mm: null. ALDRI gjett et tall.
 
 VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
 - Les ALLE rader i tabellen, inkludert FABRICATION MATERIALS og ERECTION MATERIALS.

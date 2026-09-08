@@ -65,10 +65,16 @@ function Legend() {
   );
 }
 
+// [FASE 1-FIKS] null betyr «kan ikke verifiseres» – vis N/A i stedet for et misvisende tall.
+function fmtScore(v) {
+  return v == null ? "N/A" : `${v}%`;
+}
+
 export default function ResultsPanel({
   components,
   lomItems = [],
   continuityIssues = [],
+  topologyWarnings = [],
   asmeOn,
   onToggleAsme,
   showDimensions,
@@ -83,7 +89,7 @@ export default function ResultsPanel({
   aiMessage = null,
 }) {
   const [stats, setStats] = useState({ green: 0, yellow: 0, orange: 0, red: 0 });
-  const scores = scoreExtraction(components, lomItems || [], continuityIssues || []);
+  const scores = scoreExtraction(components, lomItems || [], continuityIssues || [], topologyWarnings || []);
 
   useEffect(() => {
     const newStats = { green: 0, yellow: 0, orange: 0, red: 0 };
@@ -105,19 +111,21 @@ export default function ResultsPanel({
       {/* Valideringsboks */}
       <div className="summary-box" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
         <div className="summary-tile ok" style={{ borderColor: "rgba(16,185,129,0.3)" }}>
-          <div className="num" style={{ color: "#6ee7b7" }}>{scores.componentScore}%</div>
+          <div className="num" style={{ color: "#6ee7b7" }}>{fmtScore(scores.componentScore)}</div>
           <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Komponenter vs MTO</div>
         </div>
         <div className="summary-tile warn" style={{ borderColor: "rgba(250,204,21,0.3)" }}>
-          <div className="num" style={{ color: "#fcd34d" }}>{scores.lengthScore}%</div>
-          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Lengder vs MTO</div>
+          <div className="num" style={{ color: "#fcd34d" }}>{fmtScore(scores.lengthScore)}</div>
+          <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>
+            Lengder vs MTO{scores.verifiable && !scores.verifiable.lengths ? " (kan ikke verifiseres)" : ""}
+          </div>
         </div>
         <div className="summary-tile orange" style={{ borderColor: "rgba(251,146,60,0.3)" }}>
-          <div className="num" style={{ color: "#fb923c" }}>{scores.topologyScore}%</div>
+          <div className="num" style={{ color: "#fb923c" }}>{fmtScore(scores.topologyScore)}</div>
           <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Topologi (Ingen brudd)</div>
         </div>
         <div className="summary-tile bad" style={{ borderColor: "rgba(59,130,246,0.3)" }}>
-          <div className="num" style={{ color: "#93c5fd" }}>{scores.directionScore}%</div>
+          <div className="num" style={{ color: "#93c5fd" }}>{fmtScore(scores.directionScore)}</div>
           <div className="lbl" style={{ color: "var(--text-dim)", marginTop: "0.5rem" }}>Retninger (Logisk)</div>
         </div>
       </div>

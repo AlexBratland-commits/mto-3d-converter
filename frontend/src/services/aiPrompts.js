@@ -68,6 +68,8 @@ ORIENTERING: ${orientationInfo[orientation] || orientationInfo.elevation}
 Returner KUN JSON: {"components": [...]}`;
 };
 
+// [FASE 1-FIKS] P5: mto_items manglet length_mm i skjemaet, som gjorde lengthScore
+// strukturelt umulig å beregne. Lagt til feltet + instruksjonsblokk (kun PIPE-rader).
 export const getLomPrompt = (customStandards, ocrTexts) => {
   return `Les "List of Materials" / MTO-tabellen fra denne ISO-tegningen.
 
@@ -75,11 +77,18 @@ VIKTIG: Finn referansepunktet (Tie-in Point) og returner det som "reference_poin
 Returner et JSON-objekt:
 {
   "reference_point": { "point_name": "F11", "east_X": 360142, "north_Y": 171879, "elevation_Z": 530337 },
-  "mto_items": [ { "item_no": "1", "quantity": 4, "component": "PIPE", "size_dn_nps": "DN250", "schedule": "40S" } ]
+  "mto_items": [ { "item_no": "1", "quantity": 4, "component": "PIPE", "size_dn_nps": "DN250", "schedule": "40S", "length_mm": 3000 } ]
 }
 
 KRITISK FOR "quantity": Les tallet i "QTY"-kolonnen. Ikke kopier eksempelet over.
 KRITISK FOR "size_dn_nps": Behold hele størrelsen (f.eks. "DN50xDN25" eller "8x4\"ND").
+
+KRITISK FOR "length_mm" (KUN for PIPE-rader):
+- Les rørlengden fra beskrivelses-/lengdekolonnen, f.eks. «1628MM» → 1628, «3.0M» → 3000.
+- Hvis tallet er PER STYKK (ikke total for raden), multipliser med "quantity" for å få total lengde.
+- Usikker på om tallet er total eller per stykk? Bruk tallet du fant og sett i tillegg
+  "length_ambiguous": true på raden.
+- Finner du ingen lesbar lengde: sett "length_mm": null. ALDRI gjett et tall.
 
  ${customStandards ? `PROSJEKTSTANDARDER:\n${customStandards}\n` : ""}
  ${ocrTexts && ocrTexts.length > 0 ? `OCR-TEKST:\n${ocrTexts.map(ot => ot.text).join("\n")}` : ""}`;
