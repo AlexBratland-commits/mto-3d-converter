@@ -489,6 +489,7 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
           <option value="google/gemini-2.5-flash-image">Gemini 2.5 Flash (anbefalt)</option>
           <option value="google/gemini-2.5-pro">Gemini 2.5 Pro</option>
           <option value="google/gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+          <option value="google/gemini-3.8-flash">Gemini 3.8 Flash</option>
           <option value="openai/gpt-4o">GPT‑4o</option>
           <option value="qwen/qwen2.5-vl-72b-instruct">Qwen VL 72B</option>
         </select>
