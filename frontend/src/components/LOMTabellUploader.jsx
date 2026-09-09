@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { safeParseJSON, sanitizeMTOData, validateMTOPlausibility } from "../services/parseUtils";
+import { safeParseJSON, sanitizeMTOData, validateMTOPlausibility, detectDuplicateRuns } from "../services/parseUtils";
 
 export default function LOMTabellUploader({ apiKey, model, onLOMReady }) {
   const [file, setFile] = useState(null);
@@ -68,8 +68,12 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
               { type: "image_url", image_url: { url: `data:${file.type};base64,${base64}`, detail: "high" } }
             ]
           }],
-          max_tokens: 4000,
-          temperature: 0.05
+          // [FASE 2a-FIKS] B1: matcher extractLOM-kontrakten (DrawingUploader.jsx) –
+          // response_format + høyere max_tokens reduserer avkuttede/ugyldige svar
+          // som ellers tvinger safeParseJSON inn i nødreparasjon og gir fantom-rader.
+          max_tokens: 8000,
+          temperature: 0.05,
+          response_format: { type: "json_object" }
         })
       });
 
@@ -92,15 +96,21 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
 
       const totalItems = items.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
 
-      // [FASE 2a-FIKS] B2: varsle om fysisk usannsynlige lengder – muterer ikke items.
+      // [FASE 2a-FIKS] B3: varsle om fysisk usannsynlige lengder – muterer ikke items.
       const plausibilityWarnings = validateMTOPlausibility(items);
       const flaggedRows = new Set(plausibilityWarnings.map(w => w.item_no)).size;
+
+      // [FASE 2a-FIKS] B2: varsle om mulig MTO-lesesloop (>3 identiske påfølgende
+      // rader) – muterer ikke items.
+      const duplicateRuns = detectDuplicateRuns(items);
+      const duplicateRowCount = duplicateRuns.reduce((sum, r) => sum + r.runLength, 0);
 
       setResult({
         items,
         totalItems,
         count: items.length,
         flaggedRows,
+        duplicateRowCount,
       });
 
       if (typeof onLOMReady === "function") {
@@ -154,6 +164,11 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
           {result.flaggedRows > 0 && (
             <p style={{ color: "#fbbf24", fontWeight: 600, margin: 0, marginTop: "0.4rem" }}>
               ⚠️ {result.flaggedRows} rørrader har tvilsomme lengder (sjekk MTO-bildet på nytt)
+            </p>
+          )}
+          {result.duplicateRowCount > 0 && (
+            <p style={{ color: "#fbbf24", fontWeight: 600, margin: 0, marginTop: "0.4rem" }}>
+              ⚠️ Mulig MTO-lesesloop: {result.duplicateRowCount} identiske rader (komponent/størrelse/antall). Slett duplikatene i tabellen eller les MTO-bildet på nytt.
             </p>
           )}
           <p style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: "0.4rem" }}>

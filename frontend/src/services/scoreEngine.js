@@ -1,5 +1,5 @@
 import { normalizeComponentName, getVector } from "./geometryEngine";
-import { canonicalSizeKey } from "./parseUtils";
+import { canonicalSizeKey, getPipeLengthAnomalies } from "./parseUtils";
 
 // [FASE 1-FIKS] P1: MTO-admin-rader (fasteners, isolasjonsstrips) modelleres bevisst
 // ikke i 3D (se buildExpectedCountsChecklist) og skal derfor ikke telle i komponent-nevneren.
@@ -42,11 +42,21 @@ export function scoreExtraction(components, lomItems, continuityIssues, topology
   // within-tolerance per størrelse; vektet sum-avvik gir en jevnere, mindre hakkete score).
   // [FASE 2a-FIKS] B1: canonicalSizeKey også her, slik at lengdesummer per størrelse
   // ikke splittes opp av multi-size-formatforskjeller mellom MTO og AI.
+  // [FASE 2a-FIKS] B3: én implausibel rørlengde (f.eks. 343500mm) kan dominere
+  // nevneren og kollapse lengdescoren. Ekskluder slike rader fra summen – de er
+  // allerede flagget av vakten (getPipeLengthAnomalies), så her fjernes de fra
+  // beregningen i stedet for å telle med som «forventet».
   const lomLenSum = {}, gotLenSum = {};
+  const flaggedLengths = [];
   lomItems.forEach((i) => {
     if (normalizeComponentName(i.component) !== "Pipe") return;
     const len = Number(i.length_mm);
     if (!(len > 0)) return;
+    const anomaly = getPipeLengthAnomalies(i);
+    if (anomaly) {
+      flaggedLengths.push({ size: canonicalSizeKey(i.size_dn_nps || i.size), length_mm: len, reason: anomaly.reason });
+      return;
+    }
     const k = canonicalSizeKey(i.size_dn_nps || i.size);
     lomLenSum[k] = (lomLenSum[k] || 0) + len;
   });
@@ -62,7 +72,7 @@ export function scoreExtraction(components, lomItems, continuityIssues, topology
 
   const lomSizes = Object.keys(lomLenSum);
   let lengthScore = null;
-  const lengthDetails = { bySize: [] };
+  const lengthDetails = { bySize: [], flagged: flaggedLengths };
   if (lomSizes.length > 0) {
     let okMm = 0, totMm = 0;
     lomSizes.forEach((k) => {

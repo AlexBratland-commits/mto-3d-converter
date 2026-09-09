@@ -215,33 +215,73 @@ export function canonicalSizeKey(sizeStr) {
   return norm;
 }
 
-// [FASE 2a-FIKS] B2: MTO-lesing kan produsere fysisk umulige lengder (desimaltall
+// [FASE 2a-FIKS] B3: per-rad anomali-predikat delt av BÅDE advarsel
+// (validateMTOPlausibility) og scoring (scoreEngine.lengthScore) – ingen duplisert
+// logikk. Kun for rader der rå component inneholder «PIPE» (uavhengig av
+// normalizeComponentName – parseUtils skal ikke avhenge av geometryEngine).
+// Returnerer KUN første treff (prioritert i denne rekkefølgen); muterer ingen data.
+export function getPipeLengthAnomalies(item) {
+  const rawComponent = String(item?.component || '').toUpperCase();
+  if (!rawComponent.includes('PIPE')) return null;
+
+  const verdi = Number(item?.length_mm);
+  if (item?.length_mm === null || item?.length_mm === undefined || item?.length_mm === '' || Number.isNaN(verdi)) return null;
+
+  if (verdi > 25000) return { reason: '>25 m – usannsynlig, mulig feillesing' };
+  if (!Number.isInteger(verdi)) return { reason: 'desimal på mm-lengde – mistenkelig' };
+  if (verdi > 0 && verdi < 50) return { reason: '<50 mm – mulig antall lest som lengde' };
+  return null;
+}
+
+// [FASE 2a-FIKS] B3: MTO-lesing kan produsere fysisk umulige lengder (desimaltall
 // på mm, eller urealistisk lange enkeltrader). Denne funksjonen MUTERER INGEN DATA –
 // den returnerer kun advarsler. Om flaggede rader skal ekskluderes fra scoring er
 // en senere policy-beslutning, ikke noe denne funksjonen avgjør.
-// Ingen ny avhengighet: bruker rå component-streng, ikke normalizeComponentName
-// (parseUtils skal ikke avhenge av geometryEngine).
 export function validateMTOPlausibility(items) {
   if (!Array.isArray(items)) return [];
   const warnings = [];
 
   items.forEach((item) => {
-    const rawComponent = String(item?.component || '').toUpperCase();
-    if (!rawComponent.includes('PIPE')) return;
-
-    const verdi = Number(item.length_mm);
-    if (item.length_mm === null || item.length_mm === undefined || item.length_mm === '' || Number.isNaN(verdi)) return;
-
-    if (verdi > 25000) {
-      warnings.push({ item_no: item.item_no, felt: 'length_mm', verdi, årsak: '> 25 m på én rørrad – usannsynlig; mulig feillesing' });
-    }
-    if (!Number.isInteger(verdi)) {
-      warnings.push({ item_no: item.item_no, felt: 'length_mm', verdi, årsak: 'desimal på mm-lengde – mistenkelig' });
-    }
-    if (verdi > 0 && verdi < 50) {
-      warnings.push({ item_no: item.item_no, felt: 'length_mm', verdi, årsak: '< 50 mm – mulig antall lest som lengde' });
-    }
+    const anomaly = getPipeLengthAnomalies(item);
+    if (!anomaly) return;
+    warnings.push({ item_no: item.item_no, felt: 'length_mm', verdi: Number(item.length_mm), årsak: anomaly.reason });
   });
 
   return warnings;
+}
+
+// [FASE 2a-FIKS] B2: MTO-lesing kan loope (samme rad gjentas av modellen). Mer enn
+// `minRun` PÅFØLGENDE rader med identisk component+size_dn_nps+quantity (som
+// trimmede strenger) er aldri gyldig MTO-innhold. Muterer ingen data – returnerer
+// kun funn.
+export function detectDuplicateRuns(items, minRun = 4) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+
+  const keyOf = (item) => [
+    String(item?.component ?? '').trim(),
+    String(item?.size_dn_nps ?? item?.size ?? '').trim(),
+    String(item?.quantity ?? '').trim(),
+  ].join('|');
+
+  const runs = [];
+  let runStart = 0;
+
+  for (let i = 1; i <= items.length; i++) {
+    const continuesRun = i < items.length && keyOf(items[i]) === keyOf(items[runStart]);
+    if (!continuesRun) {
+      const runLength = i - runStart;
+      if (runLength >= minRun) {
+        const item = items[runStart];
+        runs.push({
+          component: item?.component,
+          size_dn_nps: item?.size_dn_nps ?? item?.size,
+          quantity: item?.quantity,
+          runLength,
+        });
+      }
+      runStart = i;
+    }
+  }
+
+  return runs;
 }
