@@ -60,14 +60,18 @@ export function normalizeComponentName(name) {
   if (n.includes('TEE')) return 'Tee';
   if (n.includes('NIPPLE')) return 'Nipple';
   if (n.includes('DRIP')) return 'Drip Ring';
-  if (n.includes('GASKET') || n.includes('GSK') || n.includes('STUD') || n.includes('STB') || n.includes('BOLT') || n.includes('NUT')) return 'Fastener';
+  // [FASE 2b.1-FIKS] 3: 'FASTENER' lagt til for idempotens – normalizeComponentName('Fastener')
+  // skal returnere 'Fastener', ikke falle gjennom til rå streng ved dobbel normalisering.
+  if (n.includes('GASKET') || n.includes('GSK') || n.includes('STUD') || n.includes('STB') || n.includes('BOLT') || n.includes('NUT') || n.includes('FASTENER')) return 'Fastener';
 
   // Støtter og strukturelle elementer
   if (n.includes('SUPPORT') || n.includes('SHOE') || n.includes('HANGER') || n.includes('GUIDE') || n.includes('CLAMP') || n.includes('TRUNNION') || n.includes('PR0SH')) return 'Support';
   if (n.includes('DECK') || n.includes('PENETRATION')) return 'DeckPenetration';
   if (n.includes('REINFORC') || n.includes('REP PAD') || n.includes('PD0RP')) return 'ReinforcingPad';
   if (n.includes('BRACING') || n.includes('BRACE')) return 'Bracing';
-  if (n.includes('WEAR PLATE')) return 'WearPlate';
+  // [FASE 2b.1-FIKS] 3: 'WEARPLATE' (uten mellomrom) lagt til for idempotens – andre
+  // normaliseringspass produserer 'WearPlate' → toUpperCase() gir 'WEARPLATE' uten mellomrom.
+  if (n.includes('WEAR PLATE') || n.includes('WEARPLATE')) return 'WearPlate';
   if (n.includes('INSTRUMENT') || n.includes('TRANSMITTER') || n.includes('GAUGE') || n.includes('THERMOWELL') || n.includes('ELEMENT') || n.includes('ORIFICE') || n.includes('FO ') || n.includes('RO ')) return 'Instrument';
   if (n.includes('PLUG') || n.includes('BLEED')) return 'Plug';
   if (n.includes('CAP')) return 'Cap';
@@ -166,10 +170,11 @@ export function placePipe(comp, origin, direction, incomingZ) {
 // aksial lengde i denne modellen; start og end er begge rørets skjæringspunkt (origin).
 // Den gamle T = R·tan(θ/2)-tangentmodellen ga en falsk forskyvning fordi AI-en aldri
 // leverer de innkommende/utgående tangentpunktene modellen forutsatte. Bend-radius er
-// nå ren visuell metadata som PipeComponent.jsx allerede beregner selv ved rendering –
-// geometryEngine trenger den ikke for koordinater. Ved S=E returnerer PipeComponent sin
-// buildBendGeometry (chordLen<0.01-guard) null, og komponenten faller tilbake til dens
-// eksisterende null-lengde-gren – ingen krasj.
+// nå ren visuell metadata som PipeComponent.jsx allerede beregner selv ved rendering.
+// [FASE 2b.1-FIKS] 2: KJENT BEGRENSNING (fase 3): null-lengde bends renderes som
+// punkt-markører (PipeComponent tidlig-retur) og eksporteres til STEP som 1mm-stubber
+// (computeArcPoints L<1e-6 → DEGEN_STUB). Visuell torus-rendering og STEP-bue-geometri
+// fra hjørnetangenter er planlagt oppfølging.
 export function placeBend(comp, origin, direction, incomingZ) {
   const { x: ox, y: oy, z: oz } = origin;
   const parts = parseBendParts(comp.direction);
@@ -326,8 +331,12 @@ export function validateContinuityLinear(components) {
 }
 
 export function validateTopologyRules(components) {
+  // [FASE 2b.1-FIKS] 5: samme resolveParent som buildRouteFromGraph, slik at
+  // Reducer-regelen også ser BRANCH:-barn (ellers ble grener aldri sjekket her).
+  const byId = new Map();
+  components.forEach(c => { if (c.id !== undefined && c.id !== null) byId.set(String(c.id), c); });
   const warnings = [], childrenOf = new Map();
-  components.forEach(c => { if (c.connects_from && c.connects_from !== "START") { const k = String(c.connects_from); if (!childrenOf.has(k)) childrenOf.set(k, []); childrenOf.get(k).push(c); } });
+  components.forEach(c => { if (c.connects_from && c.connects_from !== "START") { const k = String(resolveParent(c.connects_from, byId)); if (!childrenOf.has(k)) childrenOf.set(k, []); childrenOf.get(k).push(c); } });
   components.forEach((c, i) => {
     if (c.component === 'Bend' && c.direction) { const p = parseBendParts(c.direction); if (p && p[0] === p[1]) warnings.push(`Bend #${i + 1}: retning endrer seg ikke.`); }
     if (c.component === 'Reducer' && c.id !== undefined) { const kids = childrenOf.get(String(c.id)) || []; kids.forEach(n => { if (n && n.size_dn_nps && c.size_dn_nps && n.size_dn_nps === c.size_dn_nps) warnings.push(`Reducer #${i + 1}: samme DN før og etter.`); }); }
@@ -448,6 +457,12 @@ export function sanitizeRouteGeometry(routeItems, lomItems = null) {
       } else if (ASME_LENGTHS[type]) {
         cleanComp.length_mm = asmeLen;
         cleanComp._lengthSource = 'ASME_estimate';
+      } else if (type === 'Bend') {
+        // [FASE 2b.1-FIKS] 1: length_mm=null er KORREKT for Bend under
+        // skjæringspunktkonvensjonen (placeBend forbruker null aksial lengde) – dette
+        // er ikke en manglende måling som for markører, så egen kilde-etikett skiller dem.
+        cleanComp.length_mm = null;
+        cleanComp._lengthSource = 'bend_zero_length';
       } else {
         // [FASE 2b-FIKS] 1e: typer uten egen ASME-lengdetabell (Support, Instrument,
         // DeckPenetration m.fl. markørtyper) har ingen fysisk "lengde" å fabrikere –

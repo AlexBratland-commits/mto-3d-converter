@@ -222,6 +222,15 @@ export function canonicalSizeKey(sizeStr) {
 // nærmeste-DN-interpolasjon. Returnerer alltid et Number eller null – ALDRI en streng.
 export function parsePrimaryDN(sizeStr) {
   const str = String(sizeStr || '').toUpperCase();
+  if (!str) return null;
+
+  // [FASE 2b.1-FIKS] 4: samme admin-vakt som canonicalSizeKey – en streng uten DN/ND-
+  // markør som heller ikke starter på et siffer er en admin-/delenummerkode (f.eks.
+  // "M33X1.0MM", "TC"), ikke en rørstørrelse. Uten denne ville f.eks. "M16x121" gitt
+  // det meningsløse DN-tallet 16 i stedet for null.
+  const hasSizeMarker = /DN|ND/.test(str);
+  const startsWithDigit = /^\d/.test(str);
+  if (!hasSizeMarker && !startsWithDigit) return null;
 
   const dnMatch = str.match(/DN\s*(\d+)/);
   if (dnMatch) return Number(dnMatch[1]);
