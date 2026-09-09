@@ -403,6 +403,9 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
               ],
               max_tokens: 2000,
               temperature: 0.05,
+              // [FASE 2b-FIKS] 3: samme kontrakt som extractLOM/extractRoute – manglet her,
+              // bevist i konsoll-logg som avkuttede/ugyldige Pass 4-svar.
+              response_format: { type: "json_object" },
             })
           });
 

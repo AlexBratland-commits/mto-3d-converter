@@ -215,6 +215,23 @@ export function canonicalSizeKey(sizeStr) {
   return norm;
 }
 
+// [FASE 2b-FIKS] 1d: delt DN-parser for lengde-/radius-oppslag (estimateComponentLength
+// m.fl.). Erstatter replace(/[^0-9]/g,'')-mønsteret som på multi-size-strenger som
+// "DN250xDN80" slo sammen sifrene til tallet 25080 – et ugyldig DN som deretter ga en
+// fabrikkert lengde (22618mm i stedet for korrekt 216mm) via estimateComponentLength sin
+// nærmeste-DN-interpolasjon. Returnerer alltid et Number eller null – ALDRI en streng.
+export function parsePrimaryDN(sizeStr) {
+  const str = String(sizeStr || '').toUpperCase();
+
+  const dnMatch = str.match(/DN\s*(\d+)/);
+  if (dnMatch) return Number(dnMatch[1]);
+
+  const leadingMatch = str.match(/(\d+)/);
+  if (leadingMatch) return Number(leadingMatch[1]);
+
+  return null;
+}
+
 // [FASE 2a-FIKS] B3: per-rad anomali-predikat delt av BÅDE advarsel
 // (validateMTOPlausibility) og scoring (scoreEngine.lengthScore) – ingen duplisert
 // logikk. Kun for rader der rå component inneholder «PIPE» (uavhengig av

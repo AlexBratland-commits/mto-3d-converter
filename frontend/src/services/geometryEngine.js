@@ -1,4 +1,4 @@
-import { canonicalSizeKey } from "./parseUtils";
+import { canonicalSizeKey, parsePrimaryDN } from "./parseUtils";
 
 export const ASME_OD = { 50:60.3, 80:88.9, 100:114.3, 150:168.3, 200:219.1, 250:273.0, 300:323.9, 350:355.6, 400:406.4, 450:457.2, 500:508.0, 600:609.6 };
 export const ASME_BEND_RADIUS_LR = { 50:76, 80:114, 100:152, 150:229, 200:305, 250:381, 300:457, 350:533, 400:610, 450:686, 500:762, 600:914 };
@@ -124,7 +124,8 @@ export function placeShortOffset(comp, origin, direction, incomingZ) {
   const { x:ox, y:oy, z:oz } = origin;
   const dir = comp.direction || direction;
   const vec = getVector(dir) || [1,0,0];
-  const dn = parseInt(String(comp.size_dn_nps||'').replace(/DN/i,''))||100;
+  // [FASE 2b-FIKS] 1d: delt parsePrimaryDN i stedet for lokal regex – se parseUtils.js.
+  const dn = parsePrimaryDN(comp.size_dn_nps) || 100;
   const dist = estimateComponentLength(comp.component, dn);
   const isHorizontal = HORIZONTAL_DIRS.includes(normalizeDirKey(dir));
   const startZ = isHorizontal ? incomingZ : oz;
@@ -161,29 +162,30 @@ export function placePipe(comp, origin, direction, incomingZ) {
   };
 }
 
+// [FASE 2b-FIKS] 1b: skjæringspunktkonvensjon (beslutning A) – en bend forbruker null
+// aksial lengde i denne modellen; start og end er begge rørets skjæringspunkt (origin).
+// Den gamle T = R·tan(θ/2)-tangentmodellen ga en falsk forskyvning fordi AI-en aldri
+// leverer de innkommende/utgående tangentpunktene modellen forutsatte. Bend-radius er
+// nå ren visuell metadata som PipeComponent.jsx allerede beregner selv ved rendering –
+// geometryEngine trenger den ikke for koordinater. Ved S=E returnerer PipeComponent sin
+// buildBendGeometry (chordLen<0.01-guard) null, og komponenten faller tilbake til dens
+// eksisterende null-lengde-gren – ingen krasj.
 export function placeBend(comp, origin, direction, incomingZ) {
-  const { x:ox, y:oy, z:oz } = origin;
-  if (!comp.direction) return { start:{x:ox,y:oy,z:oz}, end:{x:ox,y:oy,z:oz}, direction, outZ: incomingZ };
-  const dn = parseInt(String(comp.size_dn_nps||'').replace(/DN/i,''))||100;
-  const bendR = ASME_BEND_RADIUS_LR[dn]||150;
+  const { x: ox, y: oy, z: oz } = origin;
   const parts = parseBendParts(comp.direction);
-  const from = parts?parts[0]:normalizeDirKey(direction)||direction;
-  const to = parts?parts[1]:normalizeDirKey(direction)||direction;
-  const fv = getVector(from)||[0,0,0], tv = getVector(to)||[0,0,0];
-  const dot = fv[0]*tv[0] + fv[1]*tv[1] + fv[2]*tv[2];
-  const angle = Math.acos(Math.min(1, Math.max(-1, dot)));
-  let T = bendR * Math.tan(angle / 2);
-  if (isNaN(T) || !isFinite(T)) T = bendR;
-  const isOutHorizontal = HORIZONTAL_DIRS.includes(normalizeDirKey(to));
-  const startZ = isOutHorizontal ? incomingZ : oz;
-  const endZ = isOutHorizontal ? incomingZ : oz + (fv[2]+tv[2])*T;
-  return { start: {x:ox, y:oy, z:startZ}, end: {x:ox+(fv[0]+tv[0])*T, y:oy+(fv[1]+tv[1])*T, z:endZ}, direction: to, outZ: endZ };
+  const to = parts ? parts[1] : (normalizeDirKey(direction) || direction);
+  return { start: { x: ox, y: oy, z: oz }, end: { x: ox, y: oy, z: oz }, direction: to, outZ: incomingZ };
 }
 
-const PLACERS = { 
-  Pipe: (c,o,d,z) => placePipe(c,o,d,z), 
-  Bend: (c,o,d,z) => placeBend(c,o,d,z), 
-  Flange: (c,o,d,z) => placeShortOffset(c,o,d,z), 
+const PLACERS = {
+  Pipe: (c,o,d,z) => placePipe(c,o,d,z),
+  Bend: (c,o,d,z) => placeBend(c,o,d,z),
+  // [FASE 2b-FIKS] 1c: Elbow manglet i PLACERS – falt tilbake til pass-through
+  // (origin uendret) i stedet for placeBend. Fungerte kun ved flaks fordi
+  // sanitizeRouteGeometry nå persisterer normalisert navn (component=type) FØR
+  // oppslag her, men vi dekker begge nøklene defensivt.
+  Elbow: (c,o,d,z) => placeBend(c,o,d,z),
+  Flange: (c,o,d,z) => placeShortOffset(c,o,d,z),
   Weldlet: (c,o,d,z) => placeShortOffset(c,o,d,z), 
   Reducer: (c,o,d,z) => placeShortOffset(c,o,d,z), 
   Tee: (c,o,d,z) => placeShortOffset(c,o,d,z), 
@@ -215,6 +217,21 @@ export function calculateAbsoluteCoordinatesLinear(components, originOffset = { 
   });
 }
 
+// [FASE 2b-FIKS] 1a: AI-en emitterer "connects_from": "BRANCH:<id>" ved grener fra
+// weldlets/tees (avstikk). Uten oppløsning matcher dette ingen id i byId, komponenten
+// tolkes som en uløselig rot, og får kunstig chainIndex*3000-forskyvning + falsk
+// topologyWarning selv om grenen semantisk er koblet korrekt. Ekte uløselige verdier
+// (START, ukjente id-er, manglende felt) returneres uendret – de skal fortsatt
+// klassifiseres som røtter.
+export function resolveParent(connectsFrom, byId) {
+  const raw = String(connectsFrom ?? '');
+  if (raw.startsWith('BRANCH:')) {
+    const stripped = raw.slice('BRANCH:'.length);
+    if (byId.has(stripped)) return stripped;
+  }
+  return connectsFrom;
+}
+
 export function buildRouteFromGraph(components, originOffset = { x:0, y:0, z:0 }) {
   const topologyWarnings = [];
   const hasGraphSchema = components.some(c => c.id !== undefined && c.id !== null && c.id !== "");
@@ -225,7 +242,10 @@ export function buildRouteFromGraph(components, originOffset = { x:0, y:0, z:0 }
   const byId = new Map();
   components.forEach(c => { if (c.id !== undefined && c.id !== null) byId.set(String(c.id), c); });
 
-  const isRoot = (c) => !c.connects_from || c.connects_from === "START" || !byId.has(String(c.connects_from));
+  const isRoot = (c) => {
+    const parent = resolveParent(c.connects_from, byId);
+    return !parent || parent === "START" || !byId.has(String(parent));
+  };
   const roots = components.filter(isRoot);
 
   if (roots.length > 1) topologyWarnings.push(`Fant ${roots.length} frittstående rørløp uten forbindelse til hverandre. Sjekk om det mangler en kobling.`);
@@ -234,10 +254,14 @@ export function buildRouteFromGraph(components, originOffset = { x:0, y:0, z:0 }
   }
 
   const childrenOf = new Map();
-  components.forEach(c => { if (!isRoot(c)) { const pk = String(c.connects_from); if (!childrenOf.has(pk)) childrenOf.set(pk, []); childrenOf.get(pk).push(c); } });
+  components.forEach(c => { if (!isRoot(c)) { const pk = String(resolveParent(c.connects_from, byId)); if (!childrenOf.has(pk)) childrenOf.set(pk, []); childrenOf.get(pk).push(c); } });
 
   const resolved = new Map(), visited = new Set();
   roots.forEach((root, chainIndex) => {
+    // [FASE 2b-FIKS] 1a: offset er KUN et visuelt separasjonsmiddel for genuint
+    // frittstående rørløp (flere ekte røtter) – ikke en geometrisk sannhet. Med
+    // resolveParent() ovenfor rammer dette nå kun ekte røtter, ikke BRANCH:-
+    // referanser til eksisterende id-er.
     const offset = { x: originOffset.x + chainIndex * 3000, y: originOffset.y, z: originOffset.z };
     const queue = [{ comp: root, origin: offset, direction: null, z: offset.z }];
     while (queue.length) {
@@ -267,7 +291,11 @@ export function buildRouteFromGraph(components, originOffset = { x:0, y:0, z:0 }
   const continuityIssues = [];
   withCoords.forEach((curr, i) => {
     if (curr.connects_from && curr.connects_from !== "START") {
-      const parent = byIdWithCoords.get(String(curr.connects_from));
+      // [FASE 2b-FIKS] 1a: samme BRANCH:-oppløsning som isRoot/childrenOf, ellers
+      // ville grenkomponenter aldri fått en gyldig parent her og dermed heller
+      // aldri blitt korrigert/kontinuitetssjekket mot sitt faktiske forbindelsespunkt.
+      const parentId = resolveParent(curr.connects_from, byIdWithCoords);
+      const parent = byIdWithCoords.get(String(parentId));
       if (parent && !curr._unplaced && !parent._unplaced) {
         const dx = curr.start_x - parent.end_x, dy = curr.start_y - parent.end_y, dz = curr.start_z - parent.end_z;
         const gap = Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -370,7 +398,14 @@ export function sanitizeRouteGeometry(routeItems, lomItems = null) {
   routeItems.forEach((comp, index) => {
     let cleanComp = { ...comp };
     const type = normalizeComponentName(cleanComp.component || '');
-    const dn = parseInt(String(cleanComp.size_dn_nps || '').replace(/[^0-9]/g, '')) || 100;
+    // [FASE 2b-FIKS] 1c: persister normalisert navn slik at PLACERS-oppslag
+    // (geometryEngine) og senere forbrukere (stepExport/PCFEksport) ser ett
+    // konsistent navn i stedet for den rå AI-strengen («ELBOW», «WOL», …).
+    cleanComp.component = type;
+    // [FASE 2b-FIKS] 1d: delt parsePrimaryDN i stedet for replace(/[^0-9]/g,''), som på
+    // multi-size-strenger som "DN250xDN80" slo sammen sifrene til 25080 og ga en
+    // fabrikkert lengde via estimateComponentLength sin nærmeste-DN-interpolasjon.
+    const dn = parsePrimaryDN(cleanComp.size_dn_nps) || 100;
     const asmeLen = estimateComponentLength(type, dn);
 
     if (cleanComp.direction) {
@@ -410,9 +445,17 @@ export function sanitizeRouteGeometry(routeItems, lomItems = null) {
       const aiLen = Number(cleanComp.length_mm);
       if (aiLen && aiLen > 0 && !SUSPICIOUS.has(aiLen)) {
         cleanComp._lengthSource = 'AI_vision';
-      } else {
+      } else if (ASME_LENGTHS[type]) {
         cleanComp.length_mm = asmeLen;
         cleanComp._lengthSource = 'ASME_estimate';
+      } else {
+        // [FASE 2b-FIKS] 1e: typer uten egen ASME-lengdetabell (Support, Instrument,
+        // DeckPenetration m.fl. markørtyper) har ingen fysisk "lengde" å fabrikere –
+        // estimateComponentLength sin 50mm-fallback ville vært et diktet tall.
+        // length_mm=null + _lengthSource='marker' gjør at forbrukere (f.eks.
+        // scoreEngine) aldri kan forveksle dette med en reell målt/estimert lengde.
+        cleanComp.length_mm = null;
+        cleanComp._lengthSource = 'marker';
       }
     }
 
