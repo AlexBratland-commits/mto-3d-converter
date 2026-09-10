@@ -4,6 +4,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import { safeParseJSON, canonicalSizeKey, validateMTOPlausibility } from "../services/parseUtils";
 import { calculateAbsoluteCoordinatesLinear, buildRouteFromGraph, validateTopologyRules, validateContinuityLinear, normalizeComponentName, normalizeRouteItem, sanitizeRouteGeometry, validateDimensionText } from "../services/geometryEngine";
 import { getSystemPrompt, getUserPrompt, getLomPrompt, getTargetedRescanPrompt } from "../services/aiPrompts";
+import { parsePCFFile } from "../services/pcfImport";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -284,6 +285,52 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
     return items.map(normalizeRouteItem);
   };
 
+  // [FASE 2c-FIKS] 2: PCF-import – 100% deterministisk, null AI-kall. Kjører IDENTISK
+  // pipeline som AI-veien (sanitizeRouteGeometry → mergeAndCalculate) slik at scoring
+  // og avviksrapportering fungerer likt uansett kilde.
+  const handlePCFFileChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setLoading(true);
+    try {
+      const { components: pcfComponents, warnings: pcfWarnings } = await parsePCFFile(file);
+      if (pcfWarnings.length > 0) console.warn("PCF-import advarsler:", pcfWarnings);
+      if (pcfComponents.length === 0) { alert("Fant ingen komponenter i PCF-filen."); return; }
+
+      const lomItems = Array.isArray(externalLomItems) ? externalLomItems : [];
+      const referencePoint = { x: 0, y: 0, z: 0 };
+
+      const sanitizedRouteItems = sanitizeRouteGeometry(pcfComponents, lomItems);
+      // Proveniens: PCF er en deterministisk, målt kilde – ikke AI-gjetning/ASME-estimat.
+      sanitizedRouteItems.forEach((c) => { c._lengthSource = "pcf"; });
+
+      let mergeResult;
+      try {
+        mergeResult = mergeAndCalculate(lomItems, sanitizedRouteItems, referencePoint);
+      } catch (err) {
+        console.warn("mergeAndCalculate feilet for PCF-import:", err);
+        mergeResult = {
+          components: sanitizedRouteItems,
+          lomIssues: [], extraIssues: [], topologyWarnings: ["Kunne ikke bygge graf-struktur for PCF-import."],
+          ruleWarnings: [], continuityIssues: [], reconciliationStatus: 'unknown'
+        };
+      }
+
+      const { components, lomIssues, extraIssues, topologyWarnings, ruleWarnings, continuityIssues, reconciliationStatus } = mergeResult;
+      const diagnostics = { lomIssues, extraIssues, topologyWarnings: [...topologyWarnings, ...pcfWarnings], ruleWarnings, continuityIssues, reconciliationStatus };
+
+      if (typeof onDiagnostics === "function") onDiagnostics(diagnostics);
+      onComponentsReady(components);
+      alert(`PCF importert: ${components.length} komponenter.`);
+    } catch (err) {
+      alert("PCF-import feilet: " + (err.message || "Ukjent feil"));
+      console.error("PCF-import feil:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleUpload = async () => {
     if (files.length === 0 || !apiKey) { alert(apiKey ? "Velg minst én fil." : "API‑nøkkel mangler."); return; }
     setLoading(true); setOcrProgress("");
@@ -463,6 +510,13 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
         <input type="file" accept=".pdf,.png,.jpg,.jpeg" multiple onChange={handleFileChange} style={{ display: "none" }} id="aiFileInput" />
         <label htmlFor="aiFileInput" className="btn btn-purple" style={{ marginTop: "1rem" }}>📤 Velg fil(er)</label>
         {files.length > 0 && (<div style={{ marginTop: "0.5rem", color: "var(--text-dim)", fontSize: "0.85rem" }}>{files.map((f, i) => <div key={i}>✅ {f.name}</div>)}</div>)}
+      </div>
+
+      <div className="upload-zone" style={{ borderColor: "#0ea5e9", marginTop: "1rem" }}>
+        <p style={{ fontSize: "1.05rem", fontWeight: 700 }}>📥 Importer PCF</p>
+        <p style={{ color: "#6b7280", marginTop: "0.4rem" }}>ISOGEN PCF-fil → 3D-geometri direkte, uten AI-kall (deterministisk).</p>
+        <input type="file" accept=".pcf,.txt" onChange={handlePCFFileChange} style={{ display: "none" }} id="pcfFileInput" />
+        <label htmlFor="pcfFileInput" className="btn btn-outline" style={{ marginTop: "1rem", cursor: loading ? "default" : "pointer", opacity: loading ? 0.6 : 1, pointerEvents: loading ? "none" : "auto" }}>📥 Velg PCF-fil</label>
       </div>
 
       {Array.isArray(externalLomItems) && externalLomItems.length > 0 && (

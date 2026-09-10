@@ -239,6 +239,45 @@ export function resolveParent(connectsFrom, byId) {
 
 export function buildRouteFromGraph(components, originOffset = { x:0, y:0, z:0 }) {
   const topologyWarnings = [];
+
+  // [FASE 2c-FIKS] 3: PCF-importerte komponenter har allerede ekte start/end-koordinater
+  // (PCF-filen ER koordinatene) – AI-veiens komponenter har det ALDRI på dette punktet
+  // (kun connects_from+retning+lengde; koordinater er BFS-plasseringens output, ikke input).
+  // Denne finite-sjekken skiller derfor de to kildene presist. Bruk koordinatene direkte
+  // i stedet for å la BFS/placeComponent overskrive dem, men kjør likevel samme
+  // rot-telling (for "frittstående rørløp"-varsel) og kontinuitets-validering mot
+  // connects_from/BRANCH: som graf-veien – uten å SNAPPE (mutere) koordinatene ved gap,
+  // siden PCF-data er grunnsannheten og et gap her indikerer en feil i importen selv.
+  if (components.length > 0 && components.every(c =>
+    Number.isFinite(c.start_x) && Number.isFinite(c.start_y) && Number.isFinite(c.start_z) &&
+    Number.isFinite(c.end_x) && Number.isFinite(c.end_y) && Number.isFinite(c.end_z)
+  )) {
+    const byId = new Map();
+    components.forEach(c => { if (c.id !== undefined && c.id !== null) byId.set(String(c.id), c); });
+    const isRootExplicit = (c) => {
+      const parent = resolveParent(c.connects_from, byId);
+      return !parent || parent === "START" || !byId.has(String(parent));
+    };
+    const rootCount = components.filter(isRootExplicit).length;
+    if (rootCount > 1) topologyWarnings.push(`Fant ${rootCount} frittstående rørløp uten forbindelse til hverandre. Sjekk om det mangler en kobling.`);
+
+    const continuityIssues = [];
+    components.forEach((curr, i) => {
+      if (curr.connects_from && curr.connects_from !== "START") {
+        const parent = byId.get(String(resolveParent(curr.connects_from, byId)));
+        if (parent) {
+          const dx = curr.start_x - parent.end_x, dy = curr.start_y - parent.end_y, dz = curr.start_z - parent.end_z;
+          const gap = Math.sqrt(dx * dx + dy * dy + dz * dz);
+          if (gap > 5) {
+            continuityIssues.push({ index: i, gap: Math.round(gap), currComp: parent.component || '?', nextComp: curr.component || '?', suggestion: "Importert PCF har hull mellom komponenter – sjekk BP1-kobling/filen." });
+          }
+        }
+      }
+    });
+
+    return { components, topologyWarnings, continuityIssues, usedGraphSchema: true };
+  }
+
   const hasGraphSchema = components.some(c => c.id !== undefined && c.id !== null && c.id !== "");
   if (!hasGraphSchema) {
     return { components: calculateAbsoluteCoordinatesLinear(components, originOffset), topologyWarnings, continuityIssues: [], usedGraphSchema: false };
