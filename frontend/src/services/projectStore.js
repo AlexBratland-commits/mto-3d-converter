@@ -173,32 +173,43 @@ export function exportProject(id) {
 }
 
 export function importProject(jsonString) {
+  let source;
   try {
     const parsed = JSON.parse(jsonString);
-    const source = parsed.mto3d_project_export || parsed;
-
-    const id = _genId();
-    const project = {
-      id,
-      name: (source.name || "Importert prosjekt") + " (import)",
-      createdAt: source.createdAt || _now(),
-      updatedAt: _now(),
-      settings: { ..._defaultSettings(), ...(source.settings || {}) },
-      data: { ..._defaultData(), ...(source.data || {}) },
-    };
-
-    _write(PROJECT_PREFIX + id, project);
-
-    const list = _read(PROJECTS_KEY) || [];
-    list.push({ id, name: project.name, updatedAt: project.updatedAt });
-    _write(PROJECTS_KEY, list);
-
-    setActiveProject(id);
-    return project;
+    source = parsed?.mto3d_project_export || parsed;
   } catch (e) {
     console.error("Import failed:", e);
     return null;
   }
+
+  // [FASE 2b-fix] Avvis alt som ikke er en prosjekt-backup (f.eks. MTO_Export.json-arrayet)
+  // i stedet for å opprette et tomt prosjektskall uten data.
+  const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  if (!isObject(source) || !isObject(source.data)) {
+    console.error("Import failed: filen er ikke en prosjekt-backup.");
+    return null;
+  }
+
+  const id = _genId();
+  const project = {
+    id,
+    name: (source.name || "Importert prosjekt") + " (import)",
+    createdAt: source.createdAt || _now(),
+    updatedAt: _now(),
+    settings: { ..._defaultSettings(), ...(source.settings || {}) },
+    data: { ..._defaultData(), ...source.data },
+  };
+
+  // [FASE 2b-fix] Skrivefeil (f.eks. full localStorage-kvote) kastes videre til kalleren,
+  // som viser den faktiske feilen i stedet for «ugyldig fil».
+  _write(PROJECT_PREFIX + id, project);
+
+  const list = _read(PROJECTS_KEY) || [];
+  list.push({ id, name: project.name, updatedAt: project.updatedAt });
+  _write(PROJECTS_KEY, list);
+
+  setActiveProject(id);
+  return project;
 }
 
 /* ── Storage info ────────────────────────────────────────────────── */

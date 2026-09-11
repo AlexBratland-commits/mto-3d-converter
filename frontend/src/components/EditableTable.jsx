@@ -137,6 +137,8 @@ export default function EditableTable({ data, onDataChange, enableGrouping = fal
 
   // Velg riktig datasett basert på om vi redigerer eller ikke
   const displayData = editMode ? editedData : groupedDisplayData;
+  // [FASE 2a.5-FIKS] B4: vis length_mm kun når radene faktisk har feltet (MTO/AI-rute).
+  const hasLength = (data || []).some(r => r && 'length_mm' in r);
 
   if (!data || data.length === 0) {
     return <p className="text-gray-400 mt-8 text-center">Ingen komponenter å vise.</p>;
@@ -166,6 +168,7 @@ export default function EditableTable({ data, onDataChange, enableGrouping = fal
             <th className="px-3 py-3">Component</th>
             <th className="px-3 py-3">Size</th>
             <th className="px-3 py-3 text-center">Qty</th>
+            {hasLength && <th className="px-3 py-3 text-center">Lengde (mm)</th>}
             <th className="px-3 py-3 text-center">OD (mm)</th>
             <th className="px-3 py-3 text-center">Wall T (mm)</th>
             <th className="px-3 py-3 text-center">ID (mm)</th>
@@ -193,6 +196,7 @@ export default function EditableTable({ data, onDataChange, enableGrouping = fal
                     <td className="px-3 py-2"><input value={comp.component || ''} onChange={e => updateCell(i, 'component', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-24" /></td>
                     <td className="px-3 py-2"><input value={comp.size_dn_nps || ''} onChange={e => updateCell(i, 'size_dn_nps', e.target.value)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
                     <td className="px-3 py-2"><input type="number" value={comp.quantity ?? 1} onChange={e => updateCell(i, 'quantity', parseFloat(e.target.value) || 1)} className="bg-gray-700 text-white px-2 py-1 rounded w-12 text-center" /></td>
+                    {hasLength && <td className="px-3 py-2"><input type="number" value={comp.length_mm ?? ''} onChange={e => updateCell(i, 'length_mm', e.target.value === '' ? null : Number(e.target.value))} className="bg-gray-700 text-white px-2 py-1 rounded w-20 text-center" /></td>}
                     <td className="px-3 py-2 text-center text-gray-400" colSpan={4}>{pipeData ? `${pipeData.od_mm} / ${pipeData.wall_t_mm} / ${pipeData.id_mm} / ${pipeData.vekt_kg_m}` : 'Ukjent størrelse'}</td>
                     <td className="px-3 py-2"><input type="number" value={comp.start_x ?? 0} onChange={e => updateCell(i, 'start_x', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
                     <td className="px-3 py-2"><input type="number" value={comp.start_y ?? 0} onChange={e => updateCell(i, 'start_y', parseFloat(e.target.value) || 0)} className="bg-gray-700 text-white px-2 py-1 rounded w-20" /></td>
@@ -216,6 +220,7 @@ export default function EditableTable({ data, onDataChange, enableGrouping = fal
                     </td>
                     <td className="px-3 py-2">{comp.size_dn_nps}</td>
                     <td className="px-3 py-2 text-center font-bold text-blue-400">{comp.quantity || 1}</td>
+                    {hasLength && <td className="px-3 py-2 text-center">{comp.length_mm != null && comp.length_mm !== '' ? comp.length_mm : '-'}</td>}
                     <td className="px-3 py-2 text-center">{pipeData?.od_mm || '-'}</td>
                     <td className="px-3 py-2 text-center">{pipeData?.wall_t_mm || '-'}</td>
                     <td className="px-3 py-2 text-center">{pipeData?.id_mm || '-'}</td>

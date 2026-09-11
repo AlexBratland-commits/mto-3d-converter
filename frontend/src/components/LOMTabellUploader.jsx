@@ -1,5 +1,59 @@
 import { useState, useRef } from "react";
+import * as XLSX from "xlsx";
 import { safeParseJSON, sanitizeMTOData, validateMTOPlausibility, detectDuplicateRuns } from "../services/parseUtils";
+
+// [FASE 2a.5-FIKS] B1: menneske-korrigert MTO (Excel/CSV) som alternativ til AI-lesing.
+// Kolonnenavn normaliseres (små bokstaver, kun a-z/0-9/æøå), slik at «Item No», «item_no»
+// og «Size (DN/NPS)» treffer samme felt.
+const MTO_COLUMN_ALIASES = {
+  item_no: ["itemno", "item"],
+  quantity: ["qty", "quantity", "antall"],
+  component: ["component", "komponent"],
+  size_dn_nps: ["size", "størrelse", "sizednnps"],
+  schedule: ["schedule", "sch"],
+  material: ["material"],
+  length_mm: ["lengthmm", "lengde", "lengdemm", "length"],
+};
+
+const normHeader = (h) => String(h).toLowerCase().replace(/[^a-z0-9æøå]/g, "");
+
+// Tom celle → null (ALDRI 0 – en manglende lengde skal forbli manglende). Tåler desimalkomma.
+const toNumberOrNull = (v) => {
+  if (v === "" || v === null || v === undefined) return null;
+  const n = Number(String(v).trim().replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+};
+
+export function parseMTOWorkbook(wb) {
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
+  return rows
+    .map((r, i) => {
+      const byNorm = {};
+      Object.keys(r).forEach((k) => { byNorm[normHeader(k)] = r[k]; });
+      const get = (field) => {
+        const alias = MTO_COLUMN_ALIASES[field].find((a) => a in byNorm && byNorm[a] !== "");
+        return alias ? byNorm[alias] : "";
+      };
+      return {
+        item_no: get("item_no") === "" ? String(i + 1) : get("item_no"),
+        quantity: toNumberOrNull(get("quantity")),
+        component: String(get("component")).trim(),
+        size_dn_nps: String(get("size_dn_nps")).trim(),
+        schedule: String(get("schedule")).trim(),
+        material: String(get("material")).trim(),
+        length_mm: toNumberOrNull(get("length_mm")),
+      };
+    })
+    .filter((row) => row.component !== "");
+}
+
+// CSV leses som tekst med raw:true, slik at f.eks. «1-1/2» ikke tolkes som dato.
+export async function readMTOFile(file) {
+  const wb = /\.csv$/i.test(file.name || "")
+    ? XLSX.read(await file.text(), { type: "string", raw: true })
+    : XLSX.read(await file.arrayBuffer(), { type: "array" });
+  return parseMTOWorkbook(wb);
+}
 
 export default function LOMTabellUploader({ apiKey, model, onLOMReady }) {
   const [file, setFile] = useState(null);
@@ -7,10 +61,69 @@ export default function LOMTabellUploader({ apiKey, model, onLOMReady }) {
   const [result, setResult] = useState(null);
   const [rawResponse, setRawResponse] = useState("");
   const fileInputRef = useRef();
+  const importInputRef = useRef();
 
   const handleFileChange = (e) => {
     const selected = e.target.files?.[0];
     if (selected) setFile(selected);
+  };
+
+  // [FASE 2a.5-FIKS] B1: felles pipeline for AI-lesing og fil-import – identisk
+  // sanitize → plausibilitet → duplikatvakt → onLOMReady uansett kilde.
+  const finalizeItems = (rawItems, source) => {
+    // Rens opp typiske OCR-/skriftfeil i MTO-data før de sendes til UI og state.
+    const cleanedMTOData = sanitizeMTOData(rawItems);
+    const items = Array.isArray(cleanedMTOData)
+      ? cleanedMTOData
+      : cleanedMTOData
+        ? [cleanedMTOData]
+        : [];
+
+    const totalItems = items.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
+
+    // [FASE 2a-FIKS] B3: varsle om fysisk usannsynlige lengder – muterer ikke items.
+    const plausibilityWarnings = validateMTOPlausibility(items);
+    const flaggedRows = new Set(plausibilityWarnings.map(w => w.item_no)).size;
+
+    // [FASE 2a-FIKS] B2: varsle om mulig MTO-lesesloop (>3 identiske påfølgende
+    // rader) – muterer ikke items.
+    const duplicateRuns = detectDuplicateRuns(items);
+    const duplicateRowCount = duplicateRuns.reduce((sum, r) => sum + r.runLength, 0);
+
+    setResult({
+      items,
+      totalItems,
+      count: items.length,
+      flaggedRows,
+      duplicateRowCount,
+      source,
+      // [FASE 2a.5-FIKS] <5 rader fra et AI-kall tyder på avkuttet respons.
+      lowCount: source === "ai" && items.length < 5,
+    });
+
+    if (typeof onLOMReady === "function") {
+      onLOMReady(items);
+    }
+  };
+
+  // [FASE 2a.5-FIKS] B1: Excel/CSV-import – ingen AI-kall.
+  const handleImportFile = async (e) => {
+    const selected = e.target.files?.[0];
+    e.target.value = "";
+    if (!selected) return;
+    setResult(null);
+    setRawResponse("");
+    try {
+      const rows = await readMTOFile(selected);
+      if (rows.length === 0) {
+        alert("Fant ingen MTO-rader med komponent i filen.");
+        return;
+      }
+      finalizeItems(rows, "file");
+    } catch (err) {
+      alert("Feil ved import av MTO-fil: " + (err.message || "Ukjent feil"));
+      console.error("MTO-import feil:", err);
+    }
   };
 
   const handleUpload = async () => {
@@ -86,36 +199,8 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
       // 1. Parser JSON trygt, selv om modellen returnerer avkortede eller løse responser.
       const rawParsedData = safeParseJSON(content);
 
-      // 2. Rens opp typiske OCR-/skriftfeil i MTO-data før de sendes til UI og state.
-      const cleanedMTOData = sanitizeMTOData(rawParsedData);
-      const items = Array.isArray(cleanedMTOData)
-        ? cleanedMTOData
-        : cleanedMTOData
-          ? [cleanedMTOData]
-          : [];
-
-      const totalItems = items.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
-
-      // [FASE 2a-FIKS] B3: varsle om fysisk usannsynlige lengder – muterer ikke items.
-      const plausibilityWarnings = validateMTOPlausibility(items);
-      const flaggedRows = new Set(plausibilityWarnings.map(w => w.item_no)).size;
-
-      // [FASE 2a-FIKS] B2: varsle om mulig MTO-lesesloop (>3 identiske påfølgende
-      // rader) – muterer ikke items.
-      const duplicateRuns = detectDuplicateRuns(items);
-      const duplicateRowCount = duplicateRuns.reduce((sum, r) => sum + r.runLength, 0);
-
-      setResult({
-        items,
-        totalItems,
-        count: items.length,
-        flaggedRows,
-        duplicateRowCount,
-      });
-
-      if (typeof onLOMReady === "function") {
-        onLOMReady(items);
-      }
+      // 2. Samme pipeline som fil-importen.
+      finalizeItems(rawParsedData, "ai");
     } catch (err) {
       alert("Feil ved LOM-lesing: " + (err.message || "Ukjent feil"));
       console.error("LOM-feil:", err, "Rådata:", rawResponse);
@@ -138,14 +223,29 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
           onChange={handleFileChange}
           style={{ display: "none" }}
         />
-        <button
-          className="btn btn-green"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={loading}
-          style={{ marginTop: "1rem" }}
-        >
-          {file ? `✅ ${file.name}` : "📤 Velg bilde av MTO-tabell"}
-        </button>
+        <input
+          type="file"
+          accept=".xlsx,.csv"
+          ref={importInputRef}
+          onChange={handleImportFile}
+          style={{ display: "none" }}
+        />
+        <div style={{ display: "flex", gap: "0.5rem", justifyContent: "center", flexWrap: "wrap", marginTop: "1rem" }}>
+          <button
+            className="btn btn-green"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading}
+          >
+            {file ? `✅ ${file.name}` : "📤 Velg bilde av MTO-tabell"}
+          </button>
+          <button
+            className="btn btn-outline"
+            onClick={() => importInputRef.current?.click()}
+            disabled={loading}
+          >
+            📥 Importer Excel/CSV
+          </button>
+        </div>
       </div>
 
       <button
@@ -159,8 +259,13 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
       {result && (
         <div style={{ marginTop: "1rem", padding: "1rem", background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: "0.75rem" }}>
           <p style={{ color: "#6ee7b7", fontWeight: 600, margin: 0 }}>
-            ✅ Fant {result.count} unike komponenttyper ({result.totalItems} totale enheter)
+            ✅ Fant {result.count} unike komponenttyper ({result.totalItems} totale enheter) {result.source === "file" ? "(importert fra fil)" : "(lest med AI)"}
           </p>
+          {result.lowCount && (
+            <p style={{ color: "#fbbf24", fontWeight: 600, margin: 0, marginTop: "0.4rem" }}>
+              ⚠️ Mistenklig lavt antall – respons kan være avkuttet, kjør på nytt
+            </p>
+          )}
           {result.flaggedRows > 0 && (
             <p style={{ color: "#fbbf24", fontWeight: 600, margin: 0, marginTop: "0.4rem" }}>
               ⚠️ {result.flaggedRows} rørrader har tvilsomme lengder (sjekk MTO-bildet på nytt)

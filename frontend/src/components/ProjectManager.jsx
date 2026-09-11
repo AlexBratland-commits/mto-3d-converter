@@ -14,6 +14,7 @@ import { useState, useEffect, useRef } from "react";
 import {
   createProject,
   deleteProject,
+  getProject,
   listProjects,
   setActiveProject,
   getActiveProject,
@@ -45,6 +46,13 @@ export default function ProjectManager({ onProjectChange }) {
 
   useEffect(() => { refresh(); }, []);
 
+  // [FASE 2b-fix] Navbarens import-knapp (App.jsx) endrer lagringen utenfor denne
+  // komponenten – lytt, slik at prosjektlinjen ikke viser et foreldet aktivt prosjekt.
+  useEffect(() => {
+    window.addEventListener("mto3d-projects-changed", refresh);
+    return () => window.removeEventListener("mto3d-projects-changed", refresh);
+  }, []);
+
   // Close dropdown on outside click
   useEffect(() => {
     function handleClick(e) {
@@ -65,11 +73,19 @@ export default function ProjectManager({ onProjectChange }) {
     if (onProjectChange) onProjectChange(proj);
   };
 
+  // [FASE 2b-fix] getProject manglet i importen → ReferenceError ETTER at aktiv id og
+  // prosjektlinjen var byttet, men FØR onProjectChange → navn byttet, data aldri lastet.
+  // Hent prosjektet først, og bytt aktivt prosjekt kun hvis det faktisk finnes.
   const handleSwitch = (id) => {
-    setActiveProject(id);
-    setShowList(false);
-    refresh();
     const proj = getProject(id);
+    setShowList(false);
+    if (!proj) {
+      alert("Fant ikke prosjektdata i lagringen.");
+      refresh();
+      return;
+    }
+    setActiveProject(id);
+    refresh();
     if (onProjectChange) onProjectChange(proj);
   };
 
@@ -77,10 +93,12 @@ export default function ProjectManager({ onProjectChange }) {
     const proj = getProject(id);
     const confirmed = window.confirm(`Slette prosjekt "${proj?.name || id}"? All data fjernes permanent.`);
     if (!confirmed) return;
+    const wasActive = getActiveProjectId() === id;
     deleteProject(id);
     refresh();
-    const nextActive = getActiveProject();
-    if (onProjectChange) onProjectChange(nextActive);
+    // [FASE 2b-fix] Nullstill App-state KUN når det aktive prosjektet ble slettet. Å laste
+    // inn det fortsatt aktive prosjektet på nytt ville visket ut ikke-lagret state (diagnostics).
+    if (wasActive && onProjectChange) onProjectChange(null);
   };
 
   const handleRename = () => {
@@ -101,23 +119,25 @@ export default function ProjectManager({ onProjectChange }) {
     a.href = URL.createObjectURL(blob);
     a.download = `${activeProject.name.replace(/[^a-zA-Z0-9]/g, "_")}_backup.json`;
     a.click();
-    URL.revokeObjectURL(a.href);
+    // [FASE 2b-fix] Synkron revoke rett etter click() kan avbryte nedlastingen i enkelte nettlesere.
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
 
   const handleImport = async (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
+    // [FASE 2b-fix] Nullstill før tidlig retur, ellers trigger samme fil aldri onChange igjen.
+    e.target.value = "";
     if (!file) return;
     try {
       const text = await file.text();
       const proj = importProject(text);
-      if (!proj) { alert("Kunne ikke importere – ugyldig fil."); return; }
+      if (!proj) { alert("Kunne ikke importere – ugyldig prosjektfil (forventet backup-JSON fra 💾-eksport)."); return; }
       refresh();
       if (onProjectChange) onProjectChange(proj);
       alert(`Importert prosjekt: "${proj.name}"`);
     } catch (err) {
-      alert("Import-feil: " + err.message);
+      alert("Import-feil: " + (err.message || "Ukjent feil"));
     }
-    e.target.value = "";
   };
 
   const handleNewProjectShortcut = () => {

@@ -370,13 +370,15 @@ function App() {
             <IconImport className="w-4 h-4" />
             <input type="file" accept=".json" style={{ display: "none" }} onChange={(e) => {
               const file = e.target.files[0];
+              e.target.value = "";
               if (!file) return;
               file.text().then(text => {
                 const proj = importProjectFromStore(text);
-                if (proj) handleProjectChange(proj);
-                else alert("Ugyldig fil.");
-              });
-              e.target.value = "";
+                if (!proj) return alert("Ugyldig prosjektfil (forventet backup-JSON).");
+                handleProjectChange(proj);
+                // [FASE 2b-fix] Oppdater ProjectManager-linjen (eget lokalt state).
+                window.dispatchEvent(new CustomEvent("mto3d-projects-changed"));
+              }).catch(err => alert("Import-feil: " + (err.message || "Ukjent feil")));
             }} />
           </label>
           <span className="nav-divider" />

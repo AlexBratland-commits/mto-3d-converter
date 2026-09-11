@@ -63,6 +63,10 @@ export function normalizeComponentName(name) {
   // [FASE 2b.1-FIKS] 3: 'FASTENER' lagt til for idempotens – normalizeComponentName('Fastener')
   // skal returnere 'Fastener', ikke falle gjennom til rå streng ved dobbel normalisering.
   if (n.includes('GASKET') || n.includes('GSK') || n.includes('STUD') || n.includes('STB') || n.includes('BOLT') || n.includes('NUT') || n.includes('FASTENER')) return 'Fastener';
+  // [FASE 2a.5-FIKS] B2: OCR-varianter av STUD/N-MUTS («STUPKIN-MATS», «N-MUTS») er fasteners.
+  // B3: samme MTO-rad leses som «INSULATING STRIP» eller bare «STRIP» – begge er admin-rader
+  // (ikke modellert i 3D). 'Fastener' er admin-klassen isMtoAdminItem/mergeAndCalculate kjenner.
+  if (n.includes('MUTS') || n.includes('STUPKIN') || n.includes('STRIP')) return 'Fastener';
 
   // Støtter og strukturelle elementer
   if (n.includes('SUPPORT') || n.includes('SHOE') || n.includes('HANGER') || n.includes('GUIDE') || n.includes('CLAMP') || n.includes('TRUNNION') || n.includes('PR0SH')) return 'Support';
