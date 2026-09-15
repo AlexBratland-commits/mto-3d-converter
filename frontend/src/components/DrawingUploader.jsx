@@ -414,6 +414,14 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
         return;
       }
 
+      // [FASE 2a.6-FIKS] Truncation-deteksjon: et avkuttet AI-svar (f.eks. max_tokens
+      // nådd midt i JSON) kan fortsatt parse som gyldig array, bare med for få elementer.
+      // Pass 4-rescan er unntatt – den leverer normalt kun et fåtall manglende komponenter.
+      if (routeItems.length < 5) {
+        console.warn("Mistenklig lavt antall komponenter fra extractRoute:", routeItems.length, routeItems);
+        alert("Mistenklig lavt antall komponenter – AI-responsen kan være avkuttet. Kjør analysen på nytt.");
+      }
+
       console.log("4/5: Bygger geometri og sjekker avvik...");
       setOcrProgress("Bygger 3D-grunnlag...");
       
@@ -457,6 +465,11 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
           });
 
           const rescanData = await rescanRes.json();
+          // [FASE 2a.6-FIKS] Pass 4 feilet i dag stille (400 fra API svelget uten spor).
+          // Logg status + modellnavn slik at feilende rescan-kall er synlige i konsollen.
+          if (!rescanRes.ok) {
+            console.warn("Pass 4 (Re-scan) API-feil:", rescanRes.status, "modell:", model, rescanData);
+          }
           if (rescanRes.ok) {
             const rescanParsed = safeParseJSON(rescanData.choices?.[0]?.message?.content);
             if (rescanParsed && Array.isArray(rescanParsed.components) && rescanParsed.components.length > 0) {

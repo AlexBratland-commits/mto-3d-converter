@@ -57,8 +57,15 @@ export function scoreExtraction(components, lomItems, continuityIssues, topology
       flaggedLengths.push({ size: canonicalSizeKey(i.size_dn_nps || i.size), length_mm: len, reason: anomaly.reason });
       return;
     }
+    // [FASE 2a.6-FIKS] Iso 6-test 3 (to uavhengige rekonstruksjoner): «PIPE DN80 ×5,
+    // length 381» ble telt som 381mm i stedet for 1905mm → lengthScore 38% der riktig
+    // er ~95%. Regel: for PIPE-rader med quantity > 1 tolkes length_mm som lengde PER
+    // STYKK, med mindre length_ambiguous=true (da er per-stykk vs. total uvisst, og vi
+    // gjetter ikke — length_mm brukes uendret).
+    const qty = Number(i.quantity);
+    const len_total = qty > 1 && i.length_ambiguous !== true ? len * qty : len;
     const k = canonicalSizeKey(i.size_dn_nps || i.size);
-    lomLenSum[k] = (lomLenSum[k] || 0) + len;
+    lomLenSum[k] = (lomLenSum[k] || 0) + len_total;
   });
   components.forEach((c) => {
     // VIKTIG: sanitizeRouteGeometry setter length_mm = ASME-tabellverdi på ikke-pipe-
