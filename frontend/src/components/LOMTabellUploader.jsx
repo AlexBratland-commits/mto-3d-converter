@@ -13,6 +13,7 @@ const MTO_COLUMN_ALIASES = {
   schedule: ["schedule", "sch"],
   material: ["material"],
   length_mm: ["lengthmm", "lengde", "lengdemm", "length"],
+  length_ambiguous: ["lengthambiguous", "ambiguous", "usikkerlengde", "lengdeusikker"],
 };
 
 const normHeader = (h) => String(h).toLowerCase().replace(/[^a-z0-9æøå]/g, "");
@@ -23,6 +24,26 @@ const toNumberOrNull = (v) => {
   const n = Number(String(v).trim().replace(",", "."));
   return Number.isFinite(n) ? n : null;
 };
+
+const toBoolean = (v) => {
+  const s = String(v ?? "").trim().toLowerCase();
+  return s === "true" || s === "1" || s === "ja" || s === "yes" || s === "x";
+};
+
+// [FASE 2d-FIKS] Intern kontrakt: length_mm skal ALLTID være TOTAL LENGDE FOR RADEN når
+// dataen er ferdig normalisert. Excel/CSV-kolonnen inneholder ofte en per-stykk-lengde
+// (f.eks. «quantity=5, length_mm=381» der 381 er lengden på ETT stykk) – dette normaliseres
+// til total (1905) HER, ved ingest, siden det er her vi vet at kilden er en menneskeutfylt
+// MTO-rad (ikke en AI-observasjon). Hvis raden er merket length_ambiguous (kolonnen finnes
+// og er satt), er det uvisst om tallet er total eller per stykk – da gjettes IKKE, og
+// length_mm beholdes uendret.
+function normalizePipeLengthToTotal(row) {
+  if (!String(row.component).toUpperCase().includes("PIPE")) return row;
+  const qty = Number(row.quantity);
+  const len = Number(row.length_mm);
+  if (!(len > 0) || !(qty > 1) || row.length_ambiguous === true) return row;
+  return { ...row, length_mm: len * qty };
+}
 
 export function parseMTOWorkbook(wb) {
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: "" });
@@ -42,9 +63,11 @@ export function parseMTOWorkbook(wb) {
         schedule: String(get("schedule")).trim(),
         material: String(get("material")).trim(),
         length_mm: toNumberOrNull(get("length_mm")),
+        length_ambiguous: toBoolean(get("length_ambiguous")),
       };
     })
-    .filter((row) => row.component !== "");
+    .filter((row) => row.component !== "")
+    .map(normalizePipeLengthToTotal);
 }
 
 // CSV leses som tekst med raw:true, slik at f.eks. «1-1/2» ikke tolkes som dato.
@@ -154,7 +177,7 @@ Returner KUN et rent JSON-array (uten markdown code blocks eller forklarende tek
 - size_dn_nps: dimensjon (f.eks. "DN80", "DN20", "DN250")
 - schedule: godstykkelse/schedule (f.eks. "40S", "80S", "SCH 40")
 - material: materialspesifikasjon (f.eks. "A815-S31803", "A182/F51")
-- length_mm: rørlengde i mm (KUN for PIPE-rader). Les fra beskrivelses-/lengdekolonnen, f.eks. «1628MM» → 1628, «3.0M» → 3000. Hvis tallet er per stykk (ikke total for raden), multipliser med quantity. Usikker på total vs. per stykk? Bruk tallet og sett i tillegg "length_ambiguous": true. Ingen lesbar lengde → length_mm: null. ALDRI gjett et tall.
+- length_mm: rørlengde i mm (KUN for PIPE-rader). Les fra beskrivelses-/lengdekolonnen, f.eks. «1628MM» → 1628, «3.0M» → 3000. Rapporter tallet EKSAKT slik det står i MTO-en – ALDRI multipliser det med quantity selv. Usikker på om tallet er total for raden eller per stykk? Bruk tallet du fant og sett i tillegg "length_ambiguous": true. Ingen lesbar lengde → length_mm: null. ALDRI gjett et tall.
 
 VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
 - Les ALLE rader i tabellen, inkludert FABRICATION MATERIALS og ERECTION MATERIALS.
@@ -284,6 +307,9 @@ VIKTIGE INSTRUKSJONER OG KORREKSJONER AV HÅNDSKRIFT:
 
       <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.5rem" }}>
         💡 Tips: Zoom inn på MTO-tabellen i PDF-en, ta et skjermbilde, og last opp her. Jo renere tabell, jo bedre resultat.
+      </p>
+      <p style={{ fontSize: "0.72rem", color: "#6b7280", marginTop: "0.3rem" }}>
+        📐 Excel/CSV-import: for PIPE-rader med antall &gt; 1 tolkes lengdekolonnen som lengde PER STYKK og normaliseres til total lengde (antall × lengde), med mindre en "length_ambiguous"-kolonne er satt til true for raden.
       </p>
     </div>
   );

@@ -84,10 +84,12 @@ KRITISK FOR "quantity": Les tallet i "QTY"-kolonnen. Ikke kopier eksempelet over
 KRITISK FOR "size_dn_nps": Behold hele størrelsen (f.eks. "DN50xDN25" eller "8x4\"ND").
 
 KRITISK FOR "length_mm" (KUN for PIPE-rader):
-- Les rørlengden fra beskrivelses-/lengdekolonnen, f.eks. «1628MM» → 1628, «3.0M» → 3000.
-- Hvis tallet er PER STYKK (ikke total for raden), multipliser med "quantity" for å få total lengde.
-- Usikker på om tallet er total eller per stykk? Bruk tallet du fant og sett i tillegg
-  "length_ambiguous": true på raden.
+- Les rørlengden EKSAKT slik den står i beskrivelses-/lengdekolonnen, f.eks. «1628MM» → 1628,
+  «3.0M» → 3000. Rapporter tallet slik det faktisk står i MTO-en – ALDRI multipliser det med
+  "quantity" selv. Konvertering til total lengde per rad skjer i et senere ingest-steg som har
+  informasjon du ikke har tilgang til.
+- Usikker på om tallet du leste er total for raden eller per stykk? Bruk tallet du fant og sett
+  i tillegg "length_ambiguous": true på raden.
 - Finner du ingen lesbar lengde: sett "length_mm": null. ALDRI gjett et tall.
 
  ${customStandards ? `PROSJEKTSTANDARDER:\n${customStandards}\n` : ""}

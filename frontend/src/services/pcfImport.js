@@ -1,5 +1,5 @@
 import { parsePrimaryDN } from "./parseUtils";
-import { ASME_OD, estimateComponentLength } from "./geometryEngine";
+import { ASME_OD } from "./geometryEngine";
 
 /* ================================================================
    [FASE 2c] PCF-import (ISOGEN) — 100% deterministisk, null AI-kall.
@@ -41,6 +41,28 @@ const ATTRIBUTE_KEYS = new Set(["MAT", "SIZE1", "SIZE2", "SIZE3", "SIZE4", "SI1"
 const IGNORED_STRUCTURAL_KEYS = new Set(["/PRJ", "/ISOGEN-AT-VERSION", "/UNITS-MM", "/BOR"]);
 
 const COORD_EPSILON_MM = 1.0;
+
+// [FASE 2d-FIKS] PCF-data er deterministisk (målte koordinater) og skal ALDRI sendes
+// gjennom sanitizeRouteGeometry (som kan fabrikkere retning/lengde for AI-kilder).
+// Retning utledes derfor her, direkte fra start/end-koordinatene, langs samme
+// akse-konvensjon som DIRECTION_VECTORS i geometryEngine.js (x→E/W, y→N/S, z→UP/DOWN).
+// Kan retningen ikke bestemmes entydig (ikke akseparallell, eller null-lengde) returneres
+// null + en advarsel – ALDRI en gjettet/fabrikkert retning som "E".
+function deriveDirectionFromCoords(x1, y1, z1, x2, y2, z2, label, warnings) {
+  const dx = x2 - x1, dy = y2 - y1, dz = z2 - z1;
+  const axes = [
+    { axis: "x", val: dx, pos: "E", neg: "W" },
+    { axis: "y", val: dy, pos: "N", neg: "S" },
+    { axis: "z", val: dz, pos: "UP", neg: "DOWN" },
+  ];
+  const nonZero = axes.filter((a) => Math.abs(a.val) > COORD_EPSILON_MM);
+  if (nonZero.length !== 1) {
+    warnings.push(`${label}: retning kan ikke bestemmes entydig fra koordinatene (dx=${dx}, dy=${dy}, dz=${dz}) – satt til null.`);
+    return null;
+  }
+  const a = nonZero[0];
+  return a.val > 0 ? a.pos : a.neg;
+}
 
 function odToNominalDN(diameterMm) {
   if (!Number.isFinite(diameterMm)) return null;
@@ -102,12 +124,26 @@ function buildComponentFromBlock(block, fallbackDn, warnings) {
   comp.start_x = x1; comp.start_y = y1; comp.start_z = z1;
   comp.end_x = x2; comp.end_y = y2; comp.end_z = z2;
   const dist = euclidean(x1, y1, z1, x2, y2, z2);
+  comp.direction = dist >= COORD_EPSILON_MM
+    ? deriveDirectionFromCoords(x1, y1, z1, x2, y2, z2, `${block.key} (DN${nominalDn ?? "?"})`, warnings)
+    : null;
 
   if (type === "Reducer") {
+    // [FASE 2d-FIKS] Faktisk koordinatavstand er målt data og har alltid forrang.
+    // Fallback til /LENGTH-attributtet skjer kun når start/end er kollapset (dist ~ 0);
+    // ingen DN100-ASME-estimat lenger – et estimat ville vært et fabrikkert tall for en
+    // komponent PCF-filen faktisk gir mål for.
+    if (dist >= COORD_EPSILON_MM) {
+      comp.length_mm = dist;
+      return comp;
+    }
     const explicitLen = Number(block.attrs.LENGTH);
-    comp.length_mm = Number.isFinite(explicitLen) && explicitLen > 0
-      ? explicitLen
-      : estimateComponentLength("Reducer", nominalDn || 100);
+    if (Number.isFinite(explicitLen) && explicitLen > 0) {
+      comp.length_mm = explicitLen;
+      return comp;
+    }
+    comp.length_mm = null;
+    comp._lengthSource = "marker";
     return comp;
   }
 

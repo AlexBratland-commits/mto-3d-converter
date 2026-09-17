@@ -301,17 +301,17 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
       const lomItems = Array.isArray(externalLomItems) ? externalLomItems : [];
       const referencePoint = { x: 0, y: 0, z: 0 };
 
-      const sanitizedRouteItems = sanitizeRouteGeometry(pcfComponents, lomItems);
-      // Proveniens: PCF er en deterministisk, målt kilde – ikke AI-gjetning/ASME-estimat.
-      sanitizedRouteItems.forEach((c) => { c._lengthSource = "pcf"; });
-
+      // [FASE 2d-FIKS] PCF er deterministiske, målte data og skal IKKE gjennom
+      // sanitizeRouteGeometry – den funksjonen kan fabrikkere ASME-lengdeestimater og
+      // retnings-fallbacks ment for usikre AI-observasjoner, noe som ville skjult PCF-ens
+      // egne mål/proveniens (_lengthSource, direction) satt av pcfImport.js.
       let mergeResult;
       try {
-        mergeResult = mergeAndCalculate(lomItems, sanitizedRouteItems, referencePoint);
+        mergeResult = mergeAndCalculate(lomItems, pcfComponents, referencePoint);
       } catch (err) {
         console.warn("mergeAndCalculate feilet for PCF-import:", err);
         mergeResult = {
-          components: sanitizedRouteItems,
+          components: pcfComponents,
           lomIssues: [], extraIssues: [], topologyWarnings: ["Kunne ikke bygge graf-struktur for PCF-import."],
           ruleWarnings: [], continuityIssues: [], reconciliationStatus: 'unknown'
         };
@@ -464,13 +464,16 @@ export default function DrawingUploader({ onComponentsReady, onDiagnostics, apiK
             })
           });
 
-          const rescanData = await rescanRes.json();
-          // [FASE 2a.6-FIKS] Pass 4 feilet i dag stille (400 fra API svelget uten spor).
-          // Logg status + modellnavn slik at feilende rescan-kall er synlige i konsollen.
+          // [FASE 2d-FIKS] HTTP-status må sjekkes FØR .json() forsøkes – en ikke-OK respons
+          // er ikke nødvendigvis JSON (f.eks. HTML-feilside/tekst fra gateway), og et kastet
+          // parse-unntak der stjal diagnostikken (status+modell ble aldri logget, feilen
+          // forsvant stille inn i den ytre catch-blokken).
           if (!rescanRes.ok) {
-            console.warn("Pass 4 (Re-scan) API-feil:", rescanRes.status, "modell:", model, rescanData);
-          }
-          if (rescanRes.ok) {
+            let errBody = null;
+            try { errBody = await rescanRes.json(); } catch { /* ikke-JSON feilrespons */ }
+            console.warn("Pass 4 (Re-scan) API-feil:", rescanRes.status, "modell:", model, errBody);
+          } else {
+            const rescanData = await rescanRes.json();
             const rescanParsed = safeParseJSON(rescanData.choices?.[0]?.message?.content);
             if (rescanParsed && Array.isArray(rescanParsed.components) && rescanParsed.components.length > 0) {
               console.log("PASS 4: Fant ekstra komponenter!", rescanParsed.components);
