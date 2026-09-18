@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { getPipeDimensions } from "../services/parseUtils";
 
 // Hjelpefunksjon for å finne retning på ny rad
@@ -20,14 +20,26 @@ const calculateLength = (comp) => {
 export default function EditableTable({ data, onDataChange, enableGrouping = false }) {
   const [editMode, setEditMode] = useState(false);
   const [editedData, setEditedData] = useState([]);
+  // [BUGFIX] Siste `data`-referanse vi har synkronisert editedData fra. Brukes i stedet for
+  // editedData.length for å avgjøre om nye rader kom UTENFRA – editedData.length endres også
+  // av brukerens EGNE lokale handlinger (f.eks. slettRow), og en lengde-sammenligning mot det
+  // feiltolket «bruker slettet en rad» som «data-proppen fikk flere rader», og limte den
+  // slettede raden (halen av original data) rett tilbake på editedData før Lagre i det hele
+  // tatt ble trykket.
+  const lastSyncedDataRef = useRef(null);
 
-  // Synkroniser editedData hvis data endres eksternt
+  // Synkroniser editedData hvis data-proppen faktisk endres UTENFRA mens vi redigerer
+  // (f.eks. en ny AI-analyse legger til flere komponenter mens tabellen er åpen).
   useEffect(() => {
-    if (editMode && data && data.length > editedData.length) {
-      const newItems = data.slice(editedData.length);
-      setEditedData([...editedData, ...newItems]);
+    if (!editMode || !data) return;
+    if (data === lastSyncedDataRef.current) return;
+    const prevLen = lastSyncedDataRef.current ? lastSyncedDataRef.current.length : 0;
+    if (data.length > prevLen) {
+      const newItems = data.slice(prevLen);
+      setEditedData((prev) => [...prev, ...newItems]);
     }
-  }, [data, editMode, editedData.length]);
+    lastSyncedDataRef.current = data;
+  }, [data, editMode]);
 
   // Beregn gruppe-data KUN hvis enableGrouping er true
   const groupedDisplayData = useMemo(() => {
@@ -69,6 +81,7 @@ export default function EditableTable({ data, onDataChange, enableGrouping = fal
 
   const startEditing = () => {
     setEditedData(JSON.parse(JSON.stringify(data)));
+    lastSyncedDataRef.current = data;
     setEditMode(true);
   };
 
@@ -131,6 +144,11 @@ export default function EditableTable({ data, onDataChange, enableGrouping = fal
       setEditedData([...editedData, newRow]);
     } else {
       setEditedData([...(JSON.parse(JSON.stringify(data || []))), newRow]);
+      // Går inn i redigeringsmodus her (utenom startEditing()) – må sette samme baseline
+      // som startEditing() gjør, ellers tror sync-effekten over at `data` er uendret siden
+      // «forrige» (stale/null) referanse og limer hele `data` på nytt oppå editedData,
+      // som allerede inneholder data + newRow → dupliserte rader.
+      lastSyncedDataRef.current = data;
       setEditMode(true);
     }
   };
